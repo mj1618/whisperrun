@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo, useSyncExternalStore } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -279,7 +279,11 @@ export default function GameCanvas({
   const onGameEndRef = useRef(onGameEnd);
   const touchInput = useMemo(() => new TouchInputManager(), []);
   const touchInputRef = useRef(touchInput);
-  const [showTouchControls] = useState(() => isTouchDevice());
+  const showTouchControls = useSyncExternalStore(
+    () => () => {},          // no-op subscribe — value never changes
+    () => isTouchDevice(),   // client snapshot
+    () => false              // server snapshot
+  );
 
   // Walk animation state
   const walkFrameRef = useRef(0);
@@ -415,6 +419,7 @@ export default function GameCanvas({
       runner: gameState.runner,
       guards: gameState.guards,
       cameras: gameState.cameras ?? [],
+      doors: gameState.doors ?? [],
       items: gameState.items,
       pings: gameState.pings,
       exitX: gameState.exitX,
@@ -703,12 +708,16 @@ export default function GameCanvas({
           if (input.isKeyDown("KeyD") || input.isKeyDown("ArrowRight")) dx += 1;
 
           // Touch joystick overrides keyboard if active
-          if (touchState.moveX !== 0 || touchState.moveY !== 0) {
+          const usingTouch = touchState.moveX !== 0 || touchState.moveY !== 0;
+          if (usingTouch) {
             dx = touchState.moveX;
             dy = touchState.moveY;
           }
 
-          if (dx !== 0 && dy !== 0) {
+          // Normalize keyboard input (discrete -1/0/1) for consistent
+          // diagonal speed. Touch input is already normalized by the
+          // joystick manager and carries analog magnitude, so skip it.
+          if (!usingTouch && dx !== 0 && dy !== 0) {
             const len = Math.sqrt(dx * dx + dy * dy);
             dx /= len;
             dy /= len;

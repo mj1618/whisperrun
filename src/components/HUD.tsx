@@ -51,8 +51,8 @@ function MuteButton({ themeColor = "#E8D5B7" }: { themeColor?: string }) {
   return (
     <button
       onClick={toggle}
-      className="pointer-events-auto bg-black/30 px-2 py-1 rounded text-xs
-                 hover:opacity-100 transition-opacity cursor-pointer"
+      className="pointer-events-auto bg-black/30 min-w-[44px] min-h-[44px] px-2 py-1 rounded text-xs
+                 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center"
       style={{ color: themeColor, opacity: 0.5 }}
     >
       {muted ? "\u{1F507}" : "\u{1F50A}"}
@@ -164,8 +164,8 @@ function HelpButton({
   return (
     <button
       onClick={onClick}
-      className="pointer-events-auto bg-black/30 px-2 py-1 rounded text-xs
-                 hover:opacity-100 transition-opacity cursor-pointer"
+      className="pointer-events-auto bg-black/30 min-w-[44px] min-h-[44px] px-2 py-1 rounded text-xs
+                 hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center"
       style={{ color: themeColor, opacity: 0.4 }}
     >
       ?
@@ -374,12 +374,12 @@ function WhisperHUD({
       {/* Ping type selector — bottom center */}
       {(phase === "planning" || phase === "heist") && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-auto">
-          <div className="flex gap-2 bg-[#0a0e1a]/80 px-4 py-3 rounded-xl border border-[#1e3a5f]">
+          <div className="flex gap-2 bg-[#0a0e1a]/80 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-[#1e3a5f]">
             {PING_TYPES.map((pt) => (
               <button
                 key={pt.type}
                 onClick={() => onSelectPingType?.(pt.type)}
-                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer
+                className={`min-w-[44px] min-h-[44px] px-3 sm:px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer
                   ${selectedPingType === pt.type
                     ? "ring-2 ring-white/50 scale-105"
                     : "opacity-50 hover:opacity-80"
