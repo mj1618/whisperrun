@@ -16,6 +16,24 @@ import { renderBlueprintMap, renderWhisperEntities } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
 import { tickGuard, GuardData } from "@/game/guard-ai";
 import { EventRecorder, GameEvent } from "@/game/events";
+import {
+  initAudio,
+  isAudioReady,
+  resumeAudio,
+  playFootstep,
+  playGuardFootstep,
+  playAlertSound,
+  playSuspiciousSound,
+  playItemPickup,
+  playExitUnlock,
+  playPingSound,
+  playGameOverCaught,
+  playGameOverEscaped,
+  playAmbientLoop,
+  stopAmbientLoop,
+  playCountdownTick,
+  playCountdownUrgent,
+} from "@/engine/audio";
 import HUD from "@/components/HUD";
 
 interface GameCanvasProps {
@@ -106,10 +124,17 @@ function PlanningOverlay({
   onStartHeist: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [showControls, setShowControls] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 200);
     return () => clearInterval(id);
+  }, []);
+
+  // Fade in controls after a short delay
+  useEffect(() => {
+    const timer = setTimeout(() => setShowControls(true), 300);
+    return () => clearTimeout(timer);
   }, []);
 
   const remaining = Math.max(0, PLANNING_DURATION - (now - startTime));
@@ -117,22 +142,107 @@ function PlanningOverlay({
 
   return (
     <div className="absolute inset-0 flex items-center justify-center z-20">
-      <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
-        <h2 className="text-2xl font-bold text-[#E8D5B7]">
-          Planning Phase
-        </h2>
-        <div className="text-4xl font-mono font-bold text-[#FFD700]">
-          0:{remainingSeconds.toString().padStart(2, "0")}
+      <div className="bg-black/70 rounded-2xl p-6 text-center space-y-3 max-w-lg">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-[#E8D5B7]/60 uppercase tracking-wider">
+            Planning Phase
+          </h2>
+          <div className="text-2xl font-mono font-bold text-[#FFD700]">
+            0:{remainingSeconds.toString().padStart(2, "0")}
+          </div>
         </div>
-        <p className="text-[#E8D5B7]/70 text-sm">
-          {role === "whisper"
-            ? "Study the map and ping locations for the Runner!"
-            : "Get ready to sneak in!"}
-        </p>
+
+        <div className="text-left space-y-3">
+          <div>
+            <h3 className="text-xl font-bold text-[#FFD700]">
+              Your Role: {role === "runner" ? "Runner" : "Whisper"}
+            </h3>
+            <p className="text-[#E8D5B7]/70 text-sm mt-1">
+              {role === "runner"
+                ? "Sneak through the building. Find the target. Get out."
+                : "You see the full map. Guide the Runner past the guards."}
+            </p>
+          </div>
+
+          <div
+            className={`transition-opacity duration-500 ${showControls ? "opacity-100" : "opacity-0"}`}
+          >
+            <h4 className="text-sm font-bold text-[#E8D5B7] uppercase tracking-wider mb-2">
+              Controls
+            </h4>
+            {role === "runner" ? (
+              <div className="font-mono text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-[#FFD700]">WASD / Arrow Keys</span>
+                  <span className="text-[#E8D5B7]/70">Move</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#FFD700]">Shift (hold)</span>
+                  <span className="text-[#E8D5B7]/70">Crouch (slower but harder to detect)</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#FFD700]">E / Space</span>
+                  <span className="text-[#E8D5B7]/70">Interact (hide spots, items, exit)</span>
+                </div>
+              </div>
+            ) : (
+              <div className="font-mono text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-[#FFD700]">Click</span>
+                  <span className="text-[#8BB8E8]/70">Place a ping (Runner sees it)</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#FFD700]">1 / 2 / 3</span>
+                  <span className="text-[#8BB8E8]/70">Switch ping type</span>
+                </div>
+                <div className="mt-2 space-y-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#44FF44]" />
+                    <span className="text-[#44FF44] font-bold">1 Go</span>
+                    <span className="text-[#8BB8E8]/50">&mdash; &ldquo;Head this way&rdquo;</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#FF4444]" />
+                    <span className="text-[#FF4444] font-bold">2 Danger</span>
+                    <span className="text-[#8BB8E8]/50">&mdash; &ldquo;Guard nearby!&rdquo;</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#FFD700]" />
+                    <span className="text-[#FFD700] font-bold">3 Item</span>
+                    <span className="text-[#8BB8E8]/50">&mdash; &ldquo;Target is here&rdquo;</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div
+            className={`transition-opacity duration-700 delay-200 ${showControls ? "opacity-100" : "opacity-0"}`}
+          >
+            <h4 className="text-sm font-bold text-[#E8D5B7] uppercase tracking-wider mb-2">
+              Tips
+            </h4>
+            {role === "runner" ? (
+              <ul className="text-[#E8D5B7]/60 text-xs space-y-1 list-disc list-inside">
+                <li>Guards have vision cones &mdash; stay behind them</li>
+                <li>Crouching reduces your detection range</li>
+                <li>Hide in cabinets to become invisible</li>
+                <li>Grab the target item, then find the exit door</li>
+              </ul>
+            ) : (
+              <ul className="text-[#8BB8E8]/60 text-xs space-y-1 list-disc list-inside">
+                <li>You can have up to 3 active pings</li>
+                <li>Watch the guard patrol routes (dashed lines)</li>
+                <li>The Runner has limited vision &mdash; you&apos;re their eyes</li>
+              </ul>
+            )}
+          </div>
+        </div>
+
         <button
           onClick={onStartHeist}
           className="px-8 py-3 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
-                     hover:bg-[#FFC107] transition-colors text-lg cursor-pointer"
+                     hover:bg-[#FFC107] transition-colors text-lg cursor-pointer w-full"
         >
           Start Heist!
         </button>
@@ -258,6 +368,32 @@ export default function GameCanvas({
     gameStateManagerRef.current.setServerState(local);
   }, [gameState]);
 
+  // Initialize audio on first user interaction
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      initAudio();
+      window.removeEventListener("click", handleFirstInteraction);
+      window.removeEventListener("keydown", handleFirstInteraction);
+    };
+    window.addEventListener("click", handleFirstInteraction);
+    window.addEventListener("keydown", handleFirstInteraction);
+    return () => {
+      window.removeEventListener("click", handleFirstInteraction);
+      window.removeEventListener("keydown", handleFirstInteraction);
+    };
+  }, []);
+
+  // Resume audio on tab visibility change
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        resumeAudio();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
   // Whisper: cleanup expired pings every 2 seconds
   useEffect(() => {
     if (role !== "whisper") return;
@@ -309,6 +445,11 @@ export default function GameCanvas({
         type: selectedPingTypeRef.current,
       });
 
+      // Play ping sound
+      if (isAudioReady()) {
+        playPingSound(selectedPingTypeRef.current);
+      }
+
       // Record ping event
       eventRecorderRef.current.record("ping_sent", { x: tile.x, y: tile.y });
     };
@@ -343,6 +484,10 @@ export default function GameCanvas({
     let cameraCentered = false;
     let planningAutoStarted = false;
 
+    // Audio state
+    let lastCountdownSec = -1;
+    let prevWalkFrame = -1;
+
     // Event recording state
     const recorder = eventRecorderRef.current;
     let prevPhase: string = "";
@@ -367,6 +512,7 @@ export default function GameCanvas({
         // Start recorder when heist begins
         if (state.phase === "heist" && prevPhase !== "") {
           recorder.start(state.heistStartTime ?? Date.now());
+          if (isAudioReady()) playAmbientLoop();
         }
         // Terminal events
         if (prevPhase === "heist" && state.phase === "escaped") {
@@ -384,6 +530,7 @@ export default function GameCanvas({
       // --- Event recording: item pickup ---
       if (state.runner.hasItem && !prevHasItem) {
         recorder.record("item_pickup", { itemName: state.items[0]?.name });
+        if (isAudioReady()) playItemPickup();
       }
       prevHasItem = state.runner.hasItem;
 
@@ -410,6 +557,11 @@ export default function GameCanvas({
       if (isGameOver) {
         if (!gameEndFired) {
           gameEndFired = true;
+          stopAmbientLoop();
+          if (isAudioReady()) {
+            if (state.phase === "escaped") playGameOverEscaped();
+            if (state.phase === "caught") playGameOverCaught();
+          }
           onGameEndRef.current?.(recorder.getEvents());
         }
         return;
@@ -430,6 +582,18 @@ export default function GameCanvas({
         if (perfNow - lastTimeoutCheck > TIMEOUT_CHECK_INTERVAL) {
           lastTimeoutCheck = perfNow;
           checkTimeoutRef.current({ roomId });
+        }
+      }
+
+      // Countdown sounds for last 10 seconds
+      if (state.phase === "heist" && state.heistStartTime && isAudioReady()) {
+        const elapsed = Date.now() - state.heistStartTime;
+        const remaining = Math.max(0, 180_000 - elapsed);
+        const remainingSec = Math.ceil(remaining / 1000);
+        if (remainingSec <= 10 && remainingSec !== lastCountdownSec) {
+          lastCountdownSec = remainingSec;
+          if (remainingSec <= 3) playCountdownUrgent();
+          else playCountdownTick();
         }
       }
 
@@ -496,9 +660,17 @@ export default function GameCanvas({
             walkFrameAccumRef.current += dt * 8; // 8 fps walk cycle
             walkFrameRef.current = Math.floor(walkFrameAccumRef.current) % 4;
             facingAngleRef.current = Math.atan2(dy, dx);
+
+            // Runner footstep sounds on frames 1 and 3 (feet hitting ground)
+            const curFrame = walkFrameRef.current;
+            if ((curFrame === 1 || curFrame === 3) && prevWalkFrame !== curFrame && isAudioReady()) {
+              playFootstep(crouching);
+            }
+            prevWalkFrame = curFrame;
           } else {
             walkFrameAccumRef.current = 0;
             walkFrameRef.current = 0;
+            prevWalkFrame = -1;
           }
 
           const now = performance.now();
@@ -543,7 +715,17 @@ export default function GameCanvas({
               : false;
             if (guardMoving) {
               guardWalkAccumRef.current[guard.id] = (guardWalkAccumRef.current[guard.id] ?? 0) + dt * 6; // 6 fps
+              const prevGFrame = guardWalkFrameRef.current[guard.id] ?? 0;
               guardWalkFrameRef.current[guard.id] = Math.floor(guardWalkAccumRef.current[guard.id]) % 4;
+              const gFrame = guardWalkFrameRef.current[guard.id];
+
+              // Guard footstep sounds on frame transitions (only when within visibility range)
+              if ((gFrame === 1 || gFrame === 3) && prevGFrame !== gFrame && isAudioReady()) {
+                const distToRunner = Math.hypot(result.x - gsm.localRunnerX, result.y - gsm.localRunnerY);
+                if (distToRunner < 7) {
+                  playGuardFootstep();
+                }
+              }
             } else {
               guardWalkAccumRef.current[guard.id] = 0;
               guardWalkFrameRef.current[guard.id] = 0;
@@ -555,9 +737,13 @@ export default function GameCanvas({
             // --- Event recording: guard state transitions ---
             if (oldState !== "alert" && newState === "alert") {
               recorder.record("guard_alert", { guardId: guard.id });
+              if (isAudioReady()) playAlertSound();
             }
             if (oldState === "alert" && newState === "returning") {
               recorder.record("guard_lost", { guardId: guard.id });
+            }
+            if (oldState !== "suspicious" && newState === "suspicious") {
+              if (isAudioReady()) playSuspiciousSound();
             }
 
             // --- Event recording: near-miss detection ---
@@ -626,6 +812,7 @@ export default function GameCanvas({
             map.tiles
           );
           if (interaction) {
+            if (isAudioReady() && interaction === "exit") playExitUnlock();
             interactRunnerRef.current({ roomId, sessionId, action: interaction });
           }
         }
@@ -735,6 +922,7 @@ export default function GameCanvas({
       window.removeEventListener("resize", resize);
       clearInterval(hudInterval);
       clearTileCache();
+      stopAmbientLoop();
     };
   }, [roomId, role, sessionId]);
 
@@ -776,28 +964,6 @@ export default function GameCanvas({
         />
       )}
 
-      {/* Controls hint */}
-      {phase === "heist" && role === "runner" && (
-        <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
-          <div className="bg-black/30 text-[#E8D5B7]/40 px-3 py-2 rounded text-xs space-y-0.5">
-            <div>WASD — Move</div>
-            <div>Shift — Crouch</div>
-            <div>Space/E — Interact</div>
-          </div>
-        </div>
-      )}
-
-      {/* Whisper controls hint */}
-      {(phase === "heist" || phase === "planning") && role === "whisper" && (
-        <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
-          <div className="bg-black/30 text-[#8BB8E8]/40 px-3 py-2 rounded text-xs space-y-0.5">
-            <div>Click — Place Ping</div>
-            <div>1 — Go Here</div>
-            <div>2 — Danger</div>
-            <div>3 — Item</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -15,7 +15,7 @@ WhisperRun is a 2D top-down, browser-based, two-player co-op "micro-heist" game.
 
 ```
 /src/app/             — Next.js App Router pages (using --src-dir)
-/src/engine/          — Custom 2D game engine (loop, renderer, camera, input, sprites)
+/src/engine/          — Custom 2D game engine (loop, renderer, camera, input, sprites, audio)
 /src/game/            — Game-specific logic (map, entities, guard AI, views)
 /src/components/      — React UI components (Lobby, GameCanvas, HUD, etc.)
 /src/lib/             — Shared utilities and Convex client setup
@@ -53,5 +53,7 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Milestone 8a — Event Recording, Scoring & Highlights — EventRecorder, scoring breakdown, highlight reel, daily seed, daily challenge button
 - **Completed:** Milestone 8b — Visual Polish & Sprite System — procedural sprites for Runner/Guard/Items/Tiles, tile caching, walk animations, fog wobble, dust particles, scanline overlay, patrol route visualization
 - **Completed:** Integration Review — all M7/M8 modules integrated, build passes, lint clean, end-to-end wiring verified
+- **Completed:** Sound Effects & Ambient Audio — procedural Web Audio API sound engine, footsteps, guard alerts, item pickup jingle, ambient hum, countdown ticks, game over fanfares, mute button
+- **In Progress:** Controls Tutorial & Onboarding Overlay — role-specific controls during planning phase, in-game help popup
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

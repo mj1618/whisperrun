@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { PING_TYPES } from "@/game/ping-system";
+import { setMasterVolume } from "@/engine/audio";
 
 const HEIST_DURATION = 180_000; // 3 minutes
+const CONTROLS_AUTO_DISMISS = 5_000; // 5 seconds
 
 interface HUDProps {
   role: "runner" | "whisper";
@@ -26,6 +28,151 @@ function formatCountdown(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function MuteButton({ themeColor = "#E8D5B7" }: { themeColor?: string }) {
+  const [muted, setMuted] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("whisperrun-muted") === "true";
+  });
+
+  // Apply mute state on mount
+  useEffect(() => {
+    setMasterVolume(muted ? 0 : 0.3);
+  }, [muted]);
+
+  const toggle = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      localStorage.setItem("whisperrun-muted", String(next));
+      setMasterVolume(next ? 0 : 0.3);
+      return next;
+    });
+  }, []);
+
+  return (
+    <button
+      onClick={toggle}
+      className="pointer-events-auto bg-black/30 px-2 py-1 rounded text-xs
+                 hover:opacity-100 transition-opacity cursor-pointer"
+      style={{ color: themeColor, opacity: 0.5 }}
+    >
+      {muted ? "\u{1F507}" : "\u{1F50A}"}
+    </button>
+  );
+}
+
+function useControlsHelp() {
+  const [showControls, setShowControls] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismiss = useCallback(() => setShowControls(false), []);
+  const toggle = useCallback(() => {
+    setShowControls((prev) => !prev);
+  }, []);
+
+  // Auto-dismiss after inactivity
+  useEffect(() => {
+    if (!showControls) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(dismiss, CONTROLS_AUTO_DISMISS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [showControls, dismiss]);
+
+  // Keyboard listener: H toggles, Escape dismisses
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't toggle if an input element is focused
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (e.code === "KeyH") {
+        toggle();
+      } else if (e.code === "Slash" && e.shiftKey) {
+        // ? key
+        toggle();
+      } else if (e.code === "Escape" && showControls) {
+        dismiss();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggle, dismiss, showControls]);
+
+  return { showControls, toggle, dismiss };
+}
+
+function ControlsPopup({
+  role,
+  onClose,
+}: {
+  role: "runner" | "whisper";
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="absolute inset-0 z-30 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-black/60 backdrop-blur-sm rounded-xl p-4 max-w-xs"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-[#E8D5B7]/60 text-xs mb-2">
+          Controls <span className="opacity-50">(press H to close)</span>
+        </div>
+        <div className="border-t border-[#E8D5B7]/20 mb-2" />
+        {role === "runner" ? (
+          <div className="font-mono text-xs space-y-1">
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">WASD / Arrows</span>
+              <span className="text-[#E8D5B7]/70">Move</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">Shift</span>
+              <span className="text-[#E8D5B7]/70">Crouch</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">E / Space</span>
+              <span className="text-[#E8D5B7]/70">Interact</span>
+            </div>
+          </div>
+        ) : (
+          <div className="font-mono text-xs space-y-1">
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">Click</span>
+              <span className="text-[#8BB8E8]/70">Place ping</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">1/2/3</span>
+              <span className="text-[#8BB8E8]/70">Ping type</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HelpButton({
+  onClick,
+  themeColor = "#E8D5B7",
+}: {
+  onClick: () => void;
+  themeColor?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="pointer-events-auto bg-black/30 px-2 py-1 rounded text-xs
+                 hover:opacity-100 transition-opacity cursor-pointer"
+      style={{ color: themeColor, opacity: 0.4 }}
+    >
+      ?
+    </button>
+  );
+}
+
 export default function HUD({
   role,
   phase,
@@ -40,6 +187,7 @@ export default function HUD({
   guardAlertState = "patrol",
 }: HUDProps) {
   const [now, setNow] = useState(() => Date.now());
+  const controlsHelp = useControlsHelp();
 
   useEffect(() => {
     if (phase !== "heist" && phase !== "planning") return;
@@ -79,6 +227,7 @@ export default function HUD({
       runnerState={runnerState}
       itemName={itemName}
       onSelectPingType={onSelectPingType}
+      controlsHelp={controlsHelp}
     />;
   }
 
@@ -139,12 +288,19 @@ export default function HUD({
         </div>
       )}
 
-      {/* Phase indicator — top left */}
-      <div className="absolute top-4 left-4">
+      {/* Phase indicator + help + mute — top left */}
+      <div className="absolute top-4 left-4 flex items-center gap-2">
         <div className="bg-black/30 text-[#E8D5B7]/60 px-3 py-1 rounded text-xs uppercase tracking-wider">
           HEIST
         </div>
+        <HelpButton onClick={controlsHelp.toggle} themeColor="#E8D5B7" />
+        <MuteButton themeColor="#E8D5B7" />
       </div>
+
+      {/* Controls help popup */}
+      {controlsHelp.showControls && (
+        <ControlsPopup role="runner" onClose={controlsHelp.dismiss} />
+      )}
     </div>
   );
 }
@@ -157,6 +313,7 @@ function WhisperHUD({
   runnerState,
   itemName,
   onSelectPingType,
+  controlsHelp,
 }: {
   phase: string;
   heistRemaining: number;
@@ -165,6 +322,7 @@ function WhisperHUD({
   runnerState?: { crouching: boolean; hiding: boolean; hasItem: boolean };
   itemName: string;
   onSelectPingType?: (type: "go" | "danger" | "item") => void;
+  controlsHelp?: { showControls: boolean; toggle: () => void; dismiss: () => void };
 }) {
   const isUrgent = heistRemaining <= 30_000;
   const isCritical = heistRemaining <= 10_000;
@@ -184,11 +342,15 @@ function WhisperHUD({
         </div>
       </div>
 
-      {/* Phase indicator — top left */}
-      <div className="absolute top-4 left-4">
+      {/* Phase indicator + help + mute — top left */}
+      <div className="absolute top-4 left-4 flex items-center gap-2">
         <div className="bg-[#0a0e1a]/80 text-[#8BB8E8]/80 px-3 py-1 rounded text-xs uppercase tracking-wider border border-[#1e3a5f]">
           {phase === "planning" ? "PLANNING" : "HEIST IN PROGRESS"}
         </div>
+        {controlsHelp && (
+          <HelpButton onClick={controlsHelp.toggle} themeColor="#8BB8E8" />
+        )}
+        <MuteButton themeColor="#8BB8E8" />
       </div>
 
       {/* Runner status — top right */}
@@ -244,6 +406,11 @@ function WhisperHUD({
           Pings: {activePingCount}/3
         </div>
       </div>
+
+      {/* Controls help popup */}
+      {controlsHelp?.showControls && (
+        <ControlsPopup role="whisper" onClose={controlsHelp.dismiss} />
+      )}
     </div>
   );
 }
