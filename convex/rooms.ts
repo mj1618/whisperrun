@@ -409,6 +409,7 @@ export const startGame = mutation({
       ...guardData.map((g) => ({ x: g.x, y: g.y })),
       ...itemData.map((i) => ({ x: i.x, y: i.y })),
       ...cameraData.map((c) => ({ x: c.x, y: c.y })),
+      ...doorData.map((d) => ({ x: d.x, y: d.y })),
     ];
     for (const pos of allPositions) {
       if (pos.x < 0 || pos.x > MAX_COORD || pos.y < 0 || pos.y > MAX_COORD) {

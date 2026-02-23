@@ -20,14 +20,15 @@ import {
   tickGuard,
   GuardData,
   DoorState,
+  GuardDifficultyConfig,
   canGuardSeeRunner,
   canCameraSeeRunner,
   updateCameraAngle,
   CAMERA_ALERT_COOLDOWN,
-  CAMERA_RANGE,
   CAMERA_FOV,
   NOISE_RADIUS_RUNNING,
 } from "@/game/guard-ai";
+import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
 import { EventRecorder, GameEvent } from "@/game/events";
 import {
   initAudio,
@@ -57,6 +58,7 @@ interface GameCanvasProps {
   sessionId: string;
   role: "runner" | "whisper";
   mapSeed: number;
+  difficulty?: DifficultyLevel;
   onGameEnd?: (events: GameEvent[]) => void;
 }
 
@@ -71,8 +73,8 @@ const CROUCH_VIS_RADIUS = 4 * TILE_SIZE;
 // Runner hitbox half-width in tiles
 const HITBOX_HALF = 0.3;
 
-// Planning phase duration in ms
-const PLANNING_DURATION = 30_000;
+// Planning phase duration default (overridden by difficulty)
+const DEFAULT_PLANNING_DURATION = 30_000;
 
 function canMoveTo(x: number, y: number, map: TileType[][], doors?: DoorState[]): boolean {
   const corners = [
@@ -152,10 +154,12 @@ function PlanningOverlay({
   startTime,
   role,
   onStartHeist,
+  planningDuration = DEFAULT_PLANNING_DURATION,
 }: {
   startTime: number;
   role: "runner" | "whisper";
   onStartHeist: () => void;
+  planningDuration?: number;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [showControls, setShowControls] = useState(false);
@@ -171,7 +175,7 @@ function PlanningOverlay({
     return () => clearTimeout(timer);
   }, []);
 
-  const remaining = Math.max(0, PLANNING_DURATION - (now - startTime));
+  const remaining = Math.max(0, planningDuration - (now - startTime));
   const remainingSeconds = Math.ceil(remaining / 1000);
 
   return (
@@ -296,8 +300,12 @@ export default function GameCanvas({
   sessionId,
   role,
   mapSeed,
+  difficulty: difficultyProp,
   onGameEnd,
 }: GameCanvasProps) {
+  const diffConfig = getDifficultyConfig(difficultyProp ?? "standard");
+  const diffConfigRef = useRef(diffConfig);
+  useEffect(() => { diffConfigRef.current = diffConfig; }, [diffConfig]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameStateManagerRef = useRef(new GameStateManager());
   const timeRef = useRef(0);
@@ -324,7 +332,7 @@ export default function GameCanvas({
   }, [onGameEnd]);
 
   // Generate the map deterministically from the seed (memoized — same seed = same map)
-  const generatedMap = useMemo(() => generateMap(mapSeed), [mapSeed]);
+  const generatedMap = useMemo(() => generateMap(mapSeed, difficultyProp ?? "standard"), [mapSeed, difficultyProp]);
   const generatedMapRef = useRef<GeneratedMap>(generatedMap);
   useEffect(() => {
     generatedMapRef.current = generatedMap;
@@ -763,7 +771,7 @@ export default function GameCanvas({
       // Planning phase auto-transition: Runner client auto-starts heist when countdown ends
       if (state.phase === "planning" && role === "runner" && !planningAutoStarted) {
         const elapsed = Date.now() - state.startTime;
-        if (elapsed >= PLANNING_DURATION) {
+        if (elapsed >= diffConfigRef.current.planningDurationMs) {
           planningAutoStarted = true;
           startHeistPhaseRef.current({ roomId });
         }
@@ -781,7 +789,7 @@ export default function GameCanvas({
       // Countdown sounds for last 10 seconds
       if (state.phase === "heist" && state.heistStartTime && isAudioReady()) {
         const elapsed = Date.now() - state.heistStartTime;
-        const remaining = Math.max(0, 180_000 - elapsed);
+        const remaining = Math.max(0, diffConfigRef.current.heistDurationMs - elapsed);
         const remainingSec = Math.ceil(remaining / 1000);
         if (remainingSec <= 10 && remainingSec !== lastCountdownSec) {
           lastCountdownSec = remainingSec;
@@ -892,6 +900,15 @@ export default function GameCanvas({
           }
         }
 
+        const guardDiffConfig: GuardDifficultyConfig = {
+          guardSpeed: diffConfigRef.current.guardSpeed,
+          guardAlertSpeed: diffConfigRef.current.guardAlertSpeed,
+          guardRange: diffConfigRef.current.guardRange,
+          guardCrouchRange: diffConfigRef.current.guardCrouchRange,
+          cameraRange: diffConfigRef.current.cameraRange,
+          cameraSweepSpeed: diffConfigRef.current.cameraSweepSpeed,
+        };
+
         // Guard AI tick (Runner client drives guards)
         if (state.phase === "heist" && guardsInitializedRef.current) {
           const now = Date.now();
@@ -915,7 +932,8 @@ export default function GameCanvas({
               map.tiles,
               now,
               wps,
-              localDoorsRef.current
+              localDoorsRef.current,
+              guardDiffConfig
             );
             localGuardsRef.current[i] = {
               ...guard,
@@ -964,7 +982,7 @@ export default function GameCanvas({
             if (
               (oldState === "patrol" || oldState === "returning") &&
               newState === "suspicious" &&
-              !canGuardSeeRunner(guard, runnerForGuard, map.tiles, localDoorsRef.current)
+              !canGuardSeeRunner(guard, runnerForGuard, map.tiles, localDoorsRef.current, guardDiffConfig)
             ) {
               recorder.record("noise_alert", {
                 guardId: guard.id,
@@ -1039,12 +1057,13 @@ export default function GameCanvas({
           };
 
           for (const cam of state.cameras) {
-            const currentAngle = updateCameraAngle(cam.baseAngle, elapsed);
+            const currentAngle = updateCameraAngle(cam.baseAngle, elapsed, guardDiffConfig.cameraSweepSpeed);
             const sees = canCameraSeeRunner(
               { x: cam.x, y: cam.y, angle: currentAngle },
               runnerForCamera,
               map.tiles,
-              localDoorsRef.current
+              localDoorsRef.current,
+              guardDiffConfig
             );
 
             if (sees) {
@@ -1176,8 +1195,8 @@ export default function GameCanvas({
                 cam.x * TILE_SIZE + TILE_SIZE / 2,
                 cam.y * TILE_SIZE + TILE_SIZE / 2
               );
-              const currentAngle = updateCameraAngle(cam.baseAngle, elapsedSec);
-              const rangePixels = CAMERA_RANGE * TILE_SIZE;
+              const currentAngle = updateCameraAngle(cam.baseAngle, elapsedSec, diffConfigRef.current.cameraSweepSpeed);
+              const rangePixels = (diffConfigRef.current.cameraRange) * TILE_SIZE;
               const halfFovRad = ((CAMERA_FOV * Math.PI) / 180) / 2;
 
               ctx.save();
@@ -1272,7 +1291,11 @@ export default function GameCanvas({
         ctx.scale(scale, scale);
 
         renderBlueprintMap(ctx, map.tiles, state.doors);
-        renderWhisperEntities(ctx, state, timeRef.current, guardWaypointsRef.current);
+        renderWhisperEntities(ctx, state, timeRef.current, guardWaypointsRef.current, {
+          guardRange: diffConfigRef.current.guardRange,
+          cameraRange: diffConfigRef.current.cameraRange,
+          cameraSweepSpeed: diffConfigRef.current.cameraSweepSpeed,
+        });
 
         // Render synced paths
         if (state.paths.length > 0) {
@@ -1345,6 +1368,7 @@ export default function GameCanvas({
         runnerState={gameState?.runner ?? { crouching: false, hiding: false, hasItem: false }}
         onSelectPingType={setSelectedPingType}
         guardAlertState={guardAlertState}
+        difficulty={difficultyProp}
       />
 
       {showTouchControls && (
@@ -1363,6 +1387,7 @@ export default function GameCanvas({
           startTime={gameState?.startTime ?? 0}
           role={role}
           onStartHeist={handleStartHeist}
+          planningDuration={diffConfig.planningDurationMs}
         />
       )}
 
