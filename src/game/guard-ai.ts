@@ -1,4 +1,5 @@
 import { TileType, getTile, isWalkableWithDoors } from "@/game/map";
+import { findPath } from "@/game/pathfinding";
 
 export type DoorState = { x: number; y: number; open: boolean };
 
@@ -320,6 +321,76 @@ function moveToward(
   return { x: newX, y: newY, angle };
 }
 
+// --- A* Path Cache ---
+
+const guardPathCache = new Map<string, {
+  path: Array<{ x: number; y: number }>;
+  goalX: number;
+  goalY: number;
+  pathIndex: number;
+  computedAt: number;
+}>();
+
+export function clearGuardPaths(): void {
+  guardPathCache.clear();
+}
+
+function moveAlongPath(
+  guard: GuardData,
+  goalX: number,
+  goalY: number,
+  speed: number,
+  dt: number,
+  map: TileType[][],
+  now: number,
+  doors?: DoorState[]
+): { x: number; y: number; angle: number } {
+  const cacheKey = guard.id;
+  let cached = guardPathCache.get(cacheKey);
+
+  const needsRecompute =
+    !cached ||
+    Math.abs(cached.goalX - goalX) > 0.5 ||
+    Math.abs(cached.goalY - goalY) > 0.5 ||
+    now - cached.computedAt > 2000 ||
+    cached.pathIndex >= cached.path.length;
+
+  if (needsRecompute) {
+    const path = findPath(guard.x, guard.y, goalX, goalY, map, doors);
+    if (!path || path.length === 0) {
+      // No path found or already at goal — fall back to direct movement
+      return moveToward(guard.x, guard.y, goalX, goalY, speed, dt, map, doors);
+    }
+    cached = { path, goalX, goalY, pathIndex: 0, computedAt: now };
+    guardPathCache.set(cacheKey, cached);
+  }
+
+  // After the recompute block, cached is guaranteed to be defined
+  // (if it was undefined, needsRecompute was true and we either returned or assigned)
+  const entry = cached!;
+
+  // Follow the path: move toward current waypoint
+  const wp = entry.path[entry.pathIndex];
+  const dx = wp.x - guard.x;
+  const dy = wp.y - guard.y;
+  const distToWp = Math.sqrt(dx * dx + dy * dy);
+
+  // If close to current waypoint, advance to next
+  if (distToWp < 0.3) {
+    entry.pathIndex++;
+    if (entry.pathIndex >= entry.path.length) {
+      // Reached end of path
+      return { x: guard.x, y: guard.y, angle: Math.atan2(goalY - guard.y, goalX - guard.x) };
+    }
+    // Target next waypoint this frame
+    const nextWp = entry.path[entry.pathIndex];
+    return moveToward(guard.x, guard.y, nextWp.x, nextWp.y, speed, dt, map, doors);
+  }
+
+  // Move toward current path waypoint using existing collision logic
+  return moveToward(guard.x, guard.y, wp.x, wp.y, speed, dt, map, doors);
+}
+
 // --- State Machine ---
 
 export function tickGuard(
@@ -341,6 +412,7 @@ export function tickGuard(
     case "patrol": {
       // If guard sees runner → go alert
       if (canSee) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -358,6 +430,7 @@ export function tickGuard(
       const canHearPatrol = canGuardHearRunner(guard, runner, map, doors);
       const noiseCooldownOkPatrol = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
       if (canHearPatrol && noiseCooldownOkPatrol) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -416,8 +489,8 @@ export function tickGuard(
       // Guard opens closed doors in its path before moving
       if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
 
-      // Move toward current waypoint
-      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, patrolSpeed, dt, map, doors);
+      // Move toward current waypoint using A* pathfinding
+      const moved = moveAlongPath(guard, wp.x, wp.y, patrolSpeed, dt, map, now, doors);
 
       // Open any door the guard enters
       if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
@@ -436,6 +509,7 @@ export function tickGuard(
     case "suspicious": {
       // If guard sees runner → go alert
       if (canSee) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -457,6 +531,7 @@ export function tickGuard(
         // Arrived at suspicious spot — wait for duration, then return to patrol
         const timer = guard.stateTimer ?? now;
         if (now - timer >= SUSPICIOUS_DURATION) {
+          guardPathCache.delete(guard.id);
           return {
             x: guard.x,
             y: guard.y,
@@ -480,9 +555,9 @@ export function tickGuard(
         };
       }
 
-      // Move toward last known position
+      // Move toward last known position using A* pathfinding
       if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
-      const moved = moveToward(guard.x, guard.y, lkx, lky, patrolSpeed, dt, map, doors);
+      const moved = moveAlongPath(guard, lkx, lky, patrolSpeed, dt, map, now, doors);
       if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       return {
         x: moved.x,
@@ -527,6 +602,7 @@ export function tickGuard(
 
       // Alert duration timeout → returning
       if (now - timer >= ALERT_DURATION) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -544,6 +620,7 @@ export function tickGuard(
         // Check if we've been at the spot for 2s
         // Use a heuristic: if stateTimer is well before now minus a buffer, transition
         if (now - timer >= ALERT_DURATION / 3) {
+          guardPathCache.delete(guard.id);
           return {
             x: guard.x,
             y: guard.y,
@@ -556,9 +633,9 @@ export function tickGuard(
         }
       }
 
-      // Move toward last known position
+      // Move toward last known position using A* pathfinding
       if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
-      const moved = moveToward(guard.x, guard.y, lkx, lky, chaseSpeed, dt, map, doors);
+      const moved = moveAlongPath(guard, lkx, lky, chaseSpeed, dt, map, now, doors);
       if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       const faceAngle = canSee
         ? Math.atan2(runner.y - guard.y, runner.x - guard.x)
@@ -580,6 +657,7 @@ export function tickGuard(
     case "returning": {
       // If guard sees runner while returning → go alert
       if (canSee) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -597,6 +675,7 @@ export function tickGuard(
       const canHearReturning = canGuardHearRunner(guard, runner, map, doors);
       const noiseCooldownOkReturning = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
       if (canHearReturning && noiseCooldownOkReturning) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -612,6 +691,7 @@ export function tickGuard(
 
       // Find nearest waypoint to return to
       if (wps.length === 0) {
+        guardPathCache.delete(guard.id);
         return {
           x: guard.x,
           y: guard.y,
@@ -638,6 +718,7 @@ export function tickGuard(
 
       if (distToWp < 0.3) {
         // Reached waypoint → resume patrol at next waypoint
+        guardPathCache.delete(guard.id);
         const nextWp = (nearestIdx + 1) % wps.length;
         return {
           x: guard.x,
@@ -651,7 +732,7 @@ export function tickGuard(
       }
 
       if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
-      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, patrolSpeed, dt, map, doors);
+      const moved = moveAlongPath(guard, wp.x, wp.y, patrolSpeed, dt, map, now, doors);
       if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       return {
         x: moved.x,

@@ -24,6 +24,7 @@ import {
   canGuardSeeRunner,
   canCameraSeeRunner,
   updateCameraAngle,
+  clearGuardPaths,
   CAMERA_ALERT_COOLDOWN,
   CAMERA_FOV,
   NOISE_RADIUS_RUNNING,
@@ -886,6 +887,7 @@ export default function GameCanvas({
 
         // Initialize local guards from server state on first sync
         if (!guardsInitializedRef.current && state.guards.length > 0) {
+          clearGuardPaths();
           localGuardsRef.current = state.guards.map((g) => ({
             id: g.id,
             x: g.x,
@@ -1405,6 +1407,7 @@ export default function GameCanvas({
       window.removeEventListener("resize", resize);
       clearInterval(hudInterval);
       clearTileCache();
+      clearGuardPaths();
       stopAmbientLoop();
     };
   }, [roomId, role, sessionId]);
