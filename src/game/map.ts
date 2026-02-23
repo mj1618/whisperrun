@@ -69,6 +69,21 @@ export function isWalkable(map: TileType[][], col: number, row: number): boolean
   return tile !== TileType.Wall;
 }
 
+export function isWalkableWithDoors(
+  map: TileType[][],
+  col: number,
+  row: number,
+  doors?: Array<{ x: number; y: number; open: boolean }>
+): boolean {
+  const tile = getTile(map, col, row);
+  if (tile === TileType.Wall) return false;
+  if (tile === TileType.Door && doors) {
+    const door = doors.find((d) => d.x === col && d.y === row);
+    if (door && !door.open) return false;
+  }
+  return true;
+}
+
 export function getMapWidth(map: TileType[][]): number {
   return map[0]?.length ?? 0;
 }

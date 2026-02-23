@@ -10,6 +10,7 @@ export type GameEventType =
   | "crouching_sneak"
   | "camera_spotted"
   | "noise_alert"
+  | "quick_comm"
   | "escape"
   | "caught"
   | "timeout";
@@ -24,6 +25,8 @@ export interface GameEvent {
     y?: number;
     itemName?: string;
     distance?: number; // How close a near-miss was, in tiles
+    messageId?: string;
+    text?: string;
   };
 }
 

@@ -9,7 +9,7 @@ import { TileType } from "@/game/map";
 import { LocalGameState } from "@/game/game-state";
 import { TILE_SIZE } from "@/engine/renderer";
 import { getPingColor, PING_DURATION_MS } from "@/game/ping-system";
-import { updateCameraAngle, CAMERA_RANGE, CAMERA_FOV } from "@/game/guard-ai";
+import { updateCameraAngle, CAMERA_RANGE, CAMERA_FOV, GUARD_RANGE } from "@/game/guard-ai";
 
 // Blueprint color palette
 const BP_FLOOR = "#141e30";
@@ -134,7 +134,8 @@ export function renderWhisperEntities(
   ctx: CanvasRenderingContext2D,
   gameState: LocalGameState,
   time: number,
-  guardPatrols?: Record<string, Array<{ x: number; y: number }>>
+  guardPatrols?: Record<string, Array<{ x: number; y: number }>>,
+  diffConfig?: { guardRange?: number; cameraRange?: number; cameraSweepSpeed?: number }
 ) {
   const { runner, guards, items, pings, exitX, exitY } = gameState;
 
@@ -244,7 +245,7 @@ export function renderWhisperEntities(
     }
 
     // Vision cone
-    drawVisionCone(ctx, gx, gy, guard.angle, 5, 60, guardColor);
+    drawVisionCone(ctx, gx, gy, guard.angle, diffConfig?.guardRange ?? GUARD_RANGE, 60, guardColor);
 
     // Guard body
     ctx.beginPath();
@@ -307,10 +308,10 @@ export function renderWhisperEntities(
     for (const cam of gameState.cameras) {
       const cx = cam.x * TILE_SIZE + TILE_SIZE / 2;
       const cy = cam.y * TILE_SIZE + TILE_SIZE / 2;
-      const angle = updateCameraAngle(cam.baseAngle, elapsedSec);
+      const angle = updateCameraAngle(cam.baseAngle, elapsedSec, diffConfig?.cameraSweepSpeed);
 
       // Draw vision cone (cyan/blue, distinct from guard red)
-      drawVisionCone(ctx, cx, cy, angle, CAMERA_RANGE, CAMERA_FOV, "#44AAFF");
+      drawVisionCone(ctx, cx, cy, angle, diffConfig?.cameraRange ?? CAMERA_RANGE, CAMERA_FOV, "#44AAFF");
 
       // Camera icon (small circle with lens indicator)
       ctx.fillStyle = "#44AAFF";

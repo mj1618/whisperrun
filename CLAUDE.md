@@ -63,6 +63,6 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Whisper Path Drawing — Shift+drag to draw routes on blueprint, Runner sees glowing trail through fog of war, 15s fadeout during heist, mobile draw-mode toggle
 - **Completed:** Difficulty Levels — Casual/Standard/Hard selector in lobby, parameterizes map size (3x2/4x3/5x3), guard count/speed/vision, camera count/range, heist timer, planning duration, difficulty badge in HUD
 - **Completed:** Daily Challenge Leaderboard — Convex leaderboard table with date+score index, auto-submit scores after daily challenge escapes (Runner client, duplicate prevention via roomCode), deterministic team name generator, leaderboard display on landing page and results screen with highlighted current team entry, real-time updates via Convex subscription
-- **Queued:** Whisper Quick-Comms — predefined short messages (STOP!, GO NOW!, BEHIND YOU!, HIDE!, You're safe, Nice move!) sent by Whisper to Runner, large overlay with sound cues, keyboard shortcuts (Q/W/E/R/T/Y), 1.5s cooldown, mobile touch buttons
+- **Completed:** Whisper Quick-Comms — predefined short messages (STOP!, GO NOW!, BEHIND YOU!, HIDE!, You're safe, Nice move!) sent by Whisper to Runner, large overlay with sound cues, keyboard shortcuts (Q/W/E/R/T/Y), 1.5s cooldown, mobile touch buttons
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { PING_TYPES } from "@/game/ping-system";
 import { setMasterVolume } from "@/engine/audio";
-
-const HEIST_DURATION = 180_000; // 3 minutes
+import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
+import { QUICK_COMM_MESSAGES } from "@/game/quick-comms";
 const CONTROLS_AUTO_DISMISS = 5_000; // 5 seconds
 
 interface HUDProps {
@@ -18,7 +18,9 @@ interface HUDProps {
   activePingCount?: number;
   runnerState?: { crouching: boolean; hiding: boolean; hasItem: boolean };
   onSelectPingType?: (type: "go" | "danger" | "item") => void;
+  onSendQuickComm?: (messageId: string) => void;
   guardAlertState?: string;
+  difficulty?: DifficultyLevel;
 }
 
 function formatCountdown(ms: number): string {
@@ -151,6 +153,10 @@ function ControlsPopup({
               <span className="text-[#00E5FF]">Shift+Drag</span>
               <span className="text-[#8BB8E8]/70">Draw route</span>
             </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-[#FFD700]">Q/W/E/R/T/Y</span>
+              <span className="text-[#8BB8E8]/70">Quick-comms</span>
+            </div>
             <div className="text-[#8BB8E8]/40 text-[10px] mt-1">
               Routes fade after 15s during heist
             </div>
@@ -191,10 +197,14 @@ export default function HUD({
   activePingCount = 0,
   runnerState,
   onSelectPingType,
+  onSendQuickComm,
   guardAlertState = "patrol",
+  difficulty,
 }: HUDProps) {
   const [now, setNow] = useState(() => Date.now());
   const controlsHelp = useControlsHelp();
+  const diffConfig = getDifficultyConfig(difficulty ?? "standard");
+  const heistDuration = diffConfig.heistDurationMs;
 
   useEffect(() => {
     if (phase !== "heist" && phase !== "planning") return;
@@ -208,12 +218,14 @@ export default function HUD({
     if (role === "whisper" && phase === "planning") {
       return <WhisperHUD
         phase={phase}
-        heistRemaining={HEIST_DURATION}
+        heistRemaining={heistDuration}
         selectedPingType={selectedPingType}
         activePingCount={activePingCount}
         runnerState={runnerState}
         itemName={itemName}
         onSelectPingType={onSelectPingType}
+        onSendQuickComm={onSendQuickComm}
+        difficultyLabel={diffConfig.label}
       />;
     }
     return null;
@@ -221,7 +233,7 @@ export default function HUD({
 
   // Heist phase — compute remaining time
   const heistElapsed = heistStartTime ? now - heistStartTime : 0;
-  const heistRemaining = Math.max(0, HEIST_DURATION - heistElapsed);
+  const heistRemaining = Math.max(0, heistDuration - heistElapsed);
   const isUrgent = heistRemaining <= 30_000;
   const isCritical = heistRemaining <= 10_000;
 
@@ -234,7 +246,9 @@ export default function HUD({
       runnerState={runnerState}
       itemName={itemName}
       onSelectPingType={onSelectPingType}
+      onSendQuickComm={onSendQuickComm}
       controlsHelp={controlsHelp}
+      difficultyLabel={diffConfig.label}
     />;
   }
 
@@ -295,11 +309,12 @@ export default function HUD({
         </div>
       )}
 
-      {/* Phase indicator + help + mute — top left */}
+      {/* Phase indicator + difficulty + help + mute — top left */}
       <div className="absolute top-4 left-4 flex items-center gap-2">
         <div className="bg-black/30 text-[#E8D5B7]/60 px-3 py-1 rounded text-xs uppercase tracking-wider">
           HEIST
         </div>
+        <span className="text-xs text-[#E8D5B7]/40 uppercase">{diffConfig.label}</span>
         <HelpButton onClick={controlsHelp.toggle} themeColor="#E8D5B7" />
         <MuteButton themeColor="#E8D5B7" />
       </div>
@@ -320,7 +335,9 @@ function WhisperHUD({
   runnerState,
   itemName,
   onSelectPingType,
+  onSendQuickComm,
   controlsHelp,
+  difficultyLabel,
 }: {
   phase: string;
   heistRemaining: number;
@@ -329,7 +346,9 @@ function WhisperHUD({
   runnerState?: { crouching: boolean; hiding: boolean; hasItem: boolean };
   itemName: string;
   onSelectPingType?: (type: "go" | "danger" | "item") => void;
+  onSendQuickComm?: (messageId: string) => void;
   controlsHelp?: { showControls: boolean; toggle: () => void; dismiss: () => void };
+  difficultyLabel?: string;
 }) {
   const isUrgent = heistRemaining <= 30_000;
   const isCritical = heistRemaining <= 10_000;
@@ -345,15 +364,18 @@ function WhisperHUD({
             ? "text-red-400 border-red-500 text-xl animate-pulse"
             : "text-[#8BB8E8] border-[#1e3a5f] text-xl"
         }`}>
-          {phase === "heist" ? formatCountdown(heistRemaining) : "3:00"}
+          {phase === "heist" ? formatCountdown(heistRemaining) : formatCountdown(heistRemaining)}
         </div>
       </div>
 
-      {/* Phase indicator + help + mute — top left */}
+      {/* Phase indicator + difficulty + help + mute — top left */}
       <div className="absolute top-4 left-4 flex items-center gap-2">
         <div className="bg-[#0a0e1a]/80 text-[#8BB8E8]/80 px-3 py-1 rounded text-xs uppercase tracking-wider border border-[#1e3a5f]">
           {phase === "planning" ? "PLANNING" : "HEIST IN PROGRESS"}
         </div>
+        {difficultyLabel && (
+          <span className="text-xs text-[#8BB8E8]/40 uppercase">{difficultyLabel}</span>
+        )}
         {controlsHelp && (
           <HelpButton onClick={controlsHelp.toggle} themeColor="#8BB8E8" />
         )}
@@ -413,6 +435,30 @@ function WhisperHUD({
           Pings: {activePingCount}/3
         </div>
       </div>
+
+      {/* Quick-Comm buttons — left side, vertical stack */}
+      {(phase === "planning" || phase === "heist") && (
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-auto">
+          <div className="flex flex-col gap-1.5 bg-[#0a0e1a]/80 p-2 rounded-xl border border-[#1e3a5f]">
+            <div className="text-[#8BB8E8]/40 text-[10px] text-center mb-1">COMMS</div>
+            {QUICK_COMM_MESSAGES.map((msg) => (
+              <button
+                key={msg.id}
+                onClick={() => onSendQuickComm?.(msg.id)}
+                className="min-w-[44px] min-h-[44px] px-2 py-1.5 rounded-lg text-xs font-bold
+                           transition-all cursor-pointer hover:scale-105 active:scale-95
+                           border border-transparent hover:border-current"
+                style={{ color: msg.color, backgroundColor: msg.color + "15" }}
+                title={`${msg.text} (${msg.key})`}
+              >
+                <span className="text-[10px] opacity-40 mr-1">{msg.key}</span>
+                <span className="hidden sm:inline">{msg.text}</span>
+                <span className="sm:hidden">{msg.icon}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Controls help popup */}
       {controlsHelp?.showControls && (

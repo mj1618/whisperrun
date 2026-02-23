@@ -71,6 +71,15 @@ export function generateHighlights(events: GameEvent[]): Highlight[] {
           importance: 5,
         });
         break;
+      case "quick_comm": {
+        const commText = event.data?.text ?? "something";
+        highlights.push({
+          text: `Whisper shouted: ${commText}`,
+          timestamp: event.timestamp,
+          importance: 1,
+        });
+        break;
+      }
       // heist_start, hide_enter, ping_sent, guard_lost — not shown as highlights
     }
   }

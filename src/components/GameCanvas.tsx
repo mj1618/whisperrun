@@ -49,8 +49,10 @@ import {
   playCountdownUrgent,
   playDoorOpen,
   playDoorClose,
+  playQuickCommSound,
 } from "@/engine/audio";
 import HUD from "@/components/HUD";
+import { QUICK_COMM_MESSAGES, QUICK_COMM_COOLDOWN_MS } from "@/game/quick-comms";
 
 interface GameCanvasProps {
   roomId: Id<"rooms">;
@@ -275,6 +277,7 @@ function PlanningOverlay({
               <ul className="text-[#8BB8E8]/60 text-xs space-y-1 list-disc list-inside">
                 <li>You can have up to 3 active pings</li>
                 <li>Shift+Drag to draw a route &mdash; Runner sees it as a glowing trail</li>
+                <li>Press Q/W/E/R/T/Y to send quick-comms (&ldquo;STOP!&rdquo;, &ldquo;GO NOW!&rdquo;, etc.)</li>
                 <li>Watch the guard patrol routes (dashed lines)</li>
                 <li>The Runner has limited vision &mdash; you&apos;re their eyes</li>
               </ul>
@@ -374,6 +377,7 @@ export default function GameCanvas({
   const tickGuardsMutation = useMutation(api.game.tickGuards);
   const toggleDoorMutation = useMutation(api.game.toggleDoor);
   const checkTimeout = useMutation(api.game.checkTimeout);
+  const sendQuickCommMutation = useMutation(api.game.sendQuickComm);
 
   // Store mutations/setters in refs so game loop can access them
   const moveRunnerRef = useRef(moveRunner);
@@ -416,6 +420,21 @@ export default function GameCanvas({
   const drawPathRef = useRef(drawPathMutation);
   const drawModeRef = useRef(false);
 
+  // Quick-comm state
+  const lastQuickCommRef = useRef(0);
+  const [activeComm, setActiveComm] = useState<{
+    id: string; text: string; color: string; icon: string;
+    sound: "urgent" | "info" | "celebrate"; expiresAt: number;
+  } | null>(null);
+  const lastCommCreatedAtRef = useRef(0);
+
+  const handleSendQuickComm = useCallback((messageId: string) => {
+    const now = Date.now();
+    if (now - lastQuickCommRef.current < QUICK_COMM_COOLDOWN_MS) return;
+    lastQuickCommRef.current = now;
+    sendQuickCommMutation({ roomId, messageId });
+  }, [sendQuickCommMutation, roomId]);
+
   // Disconnect warning state
   const [showDisconnectWarning, setShowDisconnectWarning] = useState(false);
 
@@ -454,6 +473,37 @@ export default function GameCanvas({
 
     return () => clearInterval(interval);
   }, [roomCode, sessionId, checkDisconnectMut]);
+
+  // Watch for incoming quick-comms
+  useEffect(() => {
+    const qc = gameState?.quickComm;
+    if (!qc) return;
+    if (qc.createdAt <= lastCommCreatedAtRef.current) return;
+    lastCommCreatedAtRef.current = qc.createdAt;
+
+    const msg = QUICK_COMM_MESSAGES.find((m) => m.id === qc.messageId);
+    if (!msg) return;
+
+    if (isAudioReady()) playQuickCommSound(msg.sound);
+
+    // Record event
+    eventRecorderRef.current.record("quick_comm", { messageId: msg.id, text: msg.text });
+
+    // Schedule setState outside of the effect body to avoid the
+    // react-hooks/set-state-in-effect lint rule (cascading renders).
+    const showTimer = setTimeout(() => {
+      setActiveComm({
+        id: msg.id,
+        text: msg.text,
+        color: msg.color,
+        icon: msg.icon,
+        sound: msg.sound,
+        expiresAt: Date.now() + msg.duration,
+      });
+    }, 0);
+    const hideTimer = setTimeout(() => setActiveComm(null), msg.duration);
+    return () => { clearTimeout(showTimer); clearTimeout(hideTimer); };
+  }, [gameState?.quickComm]);
 
   // Update game state manager when Convex data arrives
   useEffect(() => {
@@ -532,6 +582,23 @@ export default function GameCanvas({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [role]);
+
+  // Whisper: quick-comm keyboard shortcuts (Q/W/E/R/T/Y)
+  useEffect(() => {
+    if (role !== "whisper") return;
+    const commKeyMap: Record<string, string> = {
+      KeyQ: "stop", KeyW: "go", KeyE: "behind",
+      KeyR: "hide", KeyT: "safe", KeyY: "nice",
+    };
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const msgId = commKeyMap[e.code];
+      if (msgId) handleSendQuickComm(msgId);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [role, handleSendQuickComm]);
 
   // Whisper: click-to-ping handler
   useEffect(() => {
@@ -1367,6 +1434,7 @@ export default function GameCanvas({
         activePingCount={activePingCount}
         runnerState={gameState?.runner ?? { crouching: false, hiding: false, hasItem: false }}
         onSelectPingType={setSelectedPingType}
+        onSendQuickComm={handleSendQuickComm}
         guardAlertState={guardAlertState}
         difficulty={difficultyProp}
       />
@@ -1389,6 +1457,47 @@ export default function GameCanvas({
           onStartHeist={handleStartHeist}
           planningDuration={diffConfig.planningDurationMs}
         />
+      )}
+
+      {/* Quick-Comm overlay — Runner sees Whisper messages */}
+      {role === "runner" && activeComm && (
+        <div
+          className="fixed inset-0 z-20 pointer-events-none flex items-center justify-center"
+          style={{ animation: "quick-comm-in 0.15s ease-out" }}
+        >
+          <div
+            className="text-center px-8 py-4 rounded-2xl bg-black/40 backdrop-blur-sm border-2"
+            style={{
+              borderColor: activeComm.color + "80",
+              animation: "quick-comm-pulse 0.5s ease-out",
+            }}
+          >
+            <div
+              className="text-3xl sm:text-4xl font-black tracking-wider uppercase"
+              style={{
+                color: activeComm.color,
+                textShadow: `0 0 20px ${activeComm.color}60, 0 2px 4px rgba(0,0,0,0.5)`,
+              }}
+            >
+              {activeComm.text}
+            </div>
+            <div className="text-xs mt-1 opacity-40" style={{ color: activeComm.color }}>
+              — Whisper
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Whisper: quick-comm sent confirmation */}
+      {role === "whisper" && activeComm && (
+        <div className="fixed bottom-20 left-4 z-20 pointer-events-none">
+          <div
+            className="text-sm font-bold px-3 py-1 rounded-lg bg-black/40"
+            style={{ color: activeComm.color, animation: "fade-in 0.2s ease-out" }}
+          >
+            Sent: {activeComm.text}
+          </div>
+        </div>
       )}
 
       {/* Disconnect warning overlay */}

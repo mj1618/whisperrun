@@ -157,6 +157,20 @@ export function playExitUnlock(): void {
   osc.stop(now + 0.26);
 }
 
+/** Door open — short wooden creak (rising frequency sweep) */
+export function playDoorOpen(): void {
+  if (!audioCtx || !masterGain) return;
+  createNoiseBurst(0.04, 400, 0.2);
+  playTone(250, 0.06, "triangle", 0.1, 0.01);
+}
+
+/** Door close — short thud (falling frequency) */
+export function playDoorClose(): void {
+  if (!audioCtx || !masterGain) return;
+  createNoiseBurst(0.03, 250, 0.25);
+  playTone(180, 0.04, "triangle", 0.1);
+}
+
 /** Whisper ping sounds */
 export function playPingSound(type: "go" | "danger" | "item"): void {
   if (type === "go") {
@@ -187,6 +201,25 @@ export function playPingSound(type: "go" | "danger" | "item"): void {
     vibrato.start();
     osc.stop(now + 0.09);
     vibrato.stop(now + 0.09);
+  }
+}
+
+/** Quick-comm sound cues — different tones for urgent/info/celebrate */
+export function playQuickCommSound(category: "urgent" | "info" | "celebrate"): void {
+  if (!audioCtx || !masterGain) return;
+  switch (category) {
+    case "urgent":
+      playTone(600, 0.1, "square", 0.25);
+      playTone(800, 0.15, "square", 0.25, 0.1);
+      break;
+    case "info":
+      playTone(520, 0.2, "sine", 0.15);
+      break;
+    case "celebrate":
+      playTone(523, 0.1, "sine", 0.15);
+      playTone(659, 0.1, "sine", 0.15, 0.1);
+      playTone(784, 0.15, "sine", 0.15, 0.2);
+      break;
   }
 }
 

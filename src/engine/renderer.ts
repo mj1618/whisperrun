@@ -4,6 +4,7 @@ import {
   drawFloorTile,
   drawWallTile,
   drawDoorTile,
+  drawOpenDoorTile,
   drawHideSpotTile,
   drawExitTile,
   drawCameraTile,
@@ -43,9 +44,7 @@ function getCachedTile(
     case TileType.Wall:
       drawWallTile(octx, 0, 0, neighbors ?? { top: true, bottom: true, left: true, right: true });
       break;
-    case TileType.Door:
-      drawDoorTile(octx, 0, 0);
-      break;
+    // Door tiles are rendered dynamically (state changes at runtime)
     case TileType.HideSpot:
       drawHideSpotTile(octx, 0, 0);
       break;
@@ -86,7 +85,7 @@ export class Renderer {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  drawTileMap(map: TileType[][], time: number) {
+  drawTileMap(map: TileType[][], time: number, doors?: Array<{ x: number; y: number; open: boolean }>) {
     const rows = map.length;
     const cols = map[0]?.length ?? 0;
 
@@ -110,11 +109,19 @@ export class Renderer {
 
         const variation = (col * 7 + row * 13) % 4;
 
-        // Animated tiles are drawn directly; static tiles use cache
+        // Animated/dynamic tiles are drawn directly; static tiles use cache
         if (tile === TileType.Exit) {
           drawExitTile(this.ctx, screen.x, screen.y, time);
         } else if (tile === TileType.Camera) {
           drawCameraTile(this.ctx, screen.x, screen.y, time);
+        } else if (tile === TileType.Door) {
+          // Doors rendered dynamically based on open/closed state
+          const doorState = doors?.find((d) => d.x === col && d.y === row);
+          if (doorState?.open) {
+            drawOpenDoorTile(this.ctx, screen.x, screen.y);
+          } else {
+            drawDoorTile(this.ctx, screen.x, screen.y);
+          }
         } else if (tile === TileType.Wall) {
           const neighbors = getWallNeighbors(map, row, col);
           const cached = getCachedTile(tile, variation, neighbors);

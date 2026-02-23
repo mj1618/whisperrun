@@ -211,6 +211,29 @@ export const cleanupPaths = mutation({
   },
 });
 
+export const sendQuickComm = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    messageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const gameState = await ctx.db
+      .query("gameState")
+      .withIndex("by_roomId", (q) => q.eq("roomId", args.roomId))
+      .first();
+
+    if (!gameState) throw new Error("Game not found");
+    if (gameState.phase !== "planning" && gameState.phase !== "heist") return;
+
+    await ctx.db.patch(gameState._id, {
+      quickComm: {
+        messageId: args.messageId,
+        createdAt: Date.now(),
+      },
+    });
+  },
+});
+
 export const toggleDoor = mutation({
   args: {
     roomId: v.id("rooms"),
@@ -328,6 +351,13 @@ export const startHeistPhase = mutation({
   },
 });
 
+// Heist duration by difficulty (must match client-side DifficultyConfig values)
+const HEIST_DURATION_BY_DIFFICULTY: Record<string, number> = {
+  casual: 240_000,
+  standard: 180_000,
+  hard: 150_000,
+};
+
 export const checkTimeout = mutation({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, args) => {
@@ -340,8 +370,9 @@ export const checkTimeout = mutation({
     if (gameState.phase !== "heist") return;
     if (!gameState.heistStartTime) return;
 
+    const heistDuration = HEIST_DURATION_BY_DIFFICULTY[gameState.difficulty ?? "standard"] ?? 180_000;
     const elapsed = Date.now() - gameState.heistStartTime;
-    if (elapsed > 180_000) {
+    if (elapsed > heistDuration) {
       await ctx.db.patch(gameState._id, { phase: "timeout" });
       const room = await ctx.db.get(args.roomId);
       if (room) {

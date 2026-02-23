@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { generateMap } from "@/game/map-generator";
 import { facingToAngle } from "@/game/guard-ai";
+import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
 import InviteLink from "./InviteLink";
 
 type Role = "runner" | "whisper";
@@ -19,6 +20,7 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   const selectRole = useMutation(api.rooms.selectRole);
   const toggleReady = useMutation(api.rooms.toggleReady);
   const startGame = useMutation(api.rooms.startGame);
+  const setDifficultyMut = useMutation(api.rooms.setDifficulty);
   const heartbeatMut = useMutation(api.rooms.heartbeat);
 
   // Heartbeat — signal presence every 3 seconds while in lobby
@@ -47,6 +49,12 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   const other = room.players.find((p) => p.sessionId !== sessionId);
   const bothReady = room.players.length === 2 && room.players.every((p) => p.ready);
 
+  const currentDifficulty: DifficultyLevel = (room.difficulty as DifficultyLevel) ?? "standard";
+
+  const handleSetDifficulty = async (level: DifficultyLevel) => {
+    await setDifficultyMut({ roomCode, sessionId, difficulty: level });
+  };
+
   const handleSelectRole = async (role: Role) => {
     // If already selected this role, deselect
     const newRole = me?.role === role ? null : role;
@@ -60,7 +68,8 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   const handleStartGame = async () => {
     // Generate map from seed and pass entity positions to the server
     try {
-      const map = generateMap(room!.mapSeed);
+      const difficulty = room?.difficulty as DifficultyLevel | undefined ?? "standard";
+      const map = generateMap(room!.mapSeed, difficulty);
       const cameras = map.entities
         .filter((e) => e.type === "camera")
         .map((e) => ({
@@ -69,6 +78,16 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
           y: e.y,
           baseAngle: facingToAngle(e.facing),
         }));
+      // Collect door tile positions from the map
+      const doors: Array<{ x: number; y: number }> = [];
+      for (let row = 0; row < map.tiles.length; row++) {
+        for (let col = 0; col < (map.tiles[row]?.length ?? 0); col++) {
+          if (map.tiles[row][col] === 2) { // TileType.Door = 2
+            doors.push({ x: col, y: row });
+          }
+        }
+      }
+
       await startGame({
         roomCode,
         sessionId,
@@ -78,6 +97,7 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
         exitX: map.exitPos.x,
         exitY: map.exitPos.y,
         cameras,
+        doors,
       });
     } catch {
       // Game may have already been started by the other player — ignore
@@ -136,6 +156,33 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
             playerLabel={getPlayerLabel("whisper")}
             onSelect={() => handleSelectRole("whisper")}
           />
+        </div>
+
+        {/* Difficulty Selector */}
+        <div className="text-center space-y-2">
+          <p className="text-sm text-[#8B7355]">Difficulty</p>
+          <div className="flex justify-center gap-3">
+            {(["casual", "standard", "hard"] as const).map((level) => {
+              const config = getDifficultyConfig(level);
+              const isSelected = currentDifficulty === level;
+              return (
+                <button
+                  key={level}
+                  onClick={() => handleSetDifficulty(level)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all duration-200
+                    ${isSelected
+                      ? "bg-[#FFD700] text-[#2D1B0E] ring-2 ring-[#FFD700]"
+                      : "bg-[#2D1B0E] text-[#E8D5B7] border border-[#8B7355] hover:border-[#FFD700] hover:text-[#FFD700]"
+                    }`}
+                >
+                  {config.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-[#8B7355]">
+            {getDifficultyConfig(currentDifficulty).description}
+          </p>
         </div>
 
         {/* Invite Link */}

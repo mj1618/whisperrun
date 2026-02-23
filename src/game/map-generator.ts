@@ -2,6 +2,7 @@ import { TileType } from "@/game/map";
 import { RoomChunk, ROOM_CHUNKS, LOBBY_CHUNK } from "@/game/room-chunks";
 import { SeededRandom } from "@/lib/random";
 import { TARGET_ITEMS } from "@/game/target-items";
+import { DifficultyLevel, getDifficultyConfig, DifficultyConfig } from "@/game/difficulty";
 
 export interface MapEntity {
   type: "guard" | "item" | "camera" | "hideSpot" | "exit" | "runnerSpawn";
@@ -30,17 +31,9 @@ export interface GeneratedMap {
   targetItem: { x: number; y: number; name: string };
 }
 
-// Grid layout: 4 columns x 3 rows of slots
-const GRID_COLS = 4;
-const GRID_ROWS = 3;
-
 // Each slot is big enough for the largest room (9x9) + padding
 const SLOT_WIDTH = 11;
 const SLOT_HEIGHT = 11;
-
-// Total map dimensions (with 1-tile border)
-const MAP_WIDTH = GRID_COLS * SLOT_WIDTH + 2;
-const MAP_HEIGHT = GRID_ROWS * SLOT_HEIGHT + 2;
 
 interface SlotInfo {
   col: number;
@@ -56,19 +49,26 @@ interface SlotInfo {
 
 /**
  * Generate a complete map from a seed. Pure function — same seed always
- * returns the same map.
+ * returns the same map. Optional difficulty parameter changes grid size,
+ * entity counts, etc.
  */
-export function generateMap(seed: number): GeneratedMap {
+export function generateMap(seed: number, difficulty?: DifficultyLevel): GeneratedMap {
+  const config = getDifficultyConfig(difficulty ?? "standard");
   for (let attempt = 0; attempt < 5; attempt++) {
-    const result = tryGenerate(seed + attempt);
+    const result = tryGenerate(seed + attempt, config);
     if (result) return result;
   }
   // Fallback: return result from last attempt regardless of connectivity
-  return tryGenerate(seed + 10, true)!;
+  return tryGenerate(seed + 10, config, true)!;
 }
 
-function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null {
+function tryGenerate(seed: number, config: DifficultyConfig, skipValidation = false): GeneratedMap | null {
   const rng = new SeededRandom(seed);
+
+  const GRID_COLS = config.gridCols;
+  const GRID_ROWS = config.gridRows;
+  const MAP_WIDTH = GRID_COLS * SLOT_WIDTH + 2;
+  const MAP_HEIGHT = GRID_ROWS * SLOT_HEIGHT + 2;
 
   // Step 1: Decide which slots to fill
   const allSlots: Array<{ col: number; row: number }> = [];
@@ -87,7 +87,7 @@ function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null 
   );
   rng.shuffle(otherSlots);
 
-  const numEmpty = rng.nextInt(1, 3);
+  const numEmpty = rng.nextInt(0, config.maxEmptySlots);
   const filledOtherSlots = otherSlots.slice(0, otherSlots.length - numEmpty);
 
   // Ensure connectivity: all filled slots must form a connected group
@@ -218,9 +218,8 @@ function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null 
   const targetItem = { ...itemPos, name: targetItemDef.name };
   entities.push({ type: "item", ...itemPos, id: "item-1", name: targetItemDef.name });
 
-  // Guards: 1-2 guards
-  const totalRooms = slots.length;
-  const numGuards = totalRooms >= 10 ? 2 : 1;
+  // Guards: count from difficulty config
+  const numGuards = config.numGuards;
   const guardPatrols: GuardPatrol[] = [];
 
   // Pick rooms for guard spawns (avoid lobby and item room)
@@ -274,7 +273,7 @@ function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null 
     const candidates = nonLobbySlots.filter((s) => !s.chunk.hideSpots || s.chunk.hideSpots.length === 0);
     rng.shuffle(candidates);
     for (const slot of candidates) {
-      if (hideSpotCount >= 6) break;
+      if (hideSpotCount >= config.maxHideSpots) break;
       const pos = findFloorTileNear(tiles, slot.centerX + rng.nextInt(-1, 1), slot.centerY + rng.nextInt(-1, 1));
       if (tiles[pos.y][pos.x] === TileType.Floor) {
         tiles[pos.y][pos.x] = TileType.HideSpot;
@@ -284,12 +283,12 @@ function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null 
     }
   }
 
-  // Cameras: place from chunk definitions (1-3)
+  // Cameras: place from chunk definitions (capped by difficulty)
   let cameraCount = 0;
   for (const slot of slots) {
     if (!slot.chunk.cameraSpots) continue;
     for (const cs of slot.chunk.cameraSpots) {
-      if (cameraCount >= 3) break;
+      if (cameraCount >= config.maxCameras) break;
       const x = slot.tileX + cs.x;
       const y = slot.tileY + cs.y;
       if (tiles[y][x] === TileType.Camera) {
@@ -345,6 +344,9 @@ function stampChunk(tiles: TileType[][], slot: SlotInfo): void {
 }
 
 function connectHorizontal(tiles: TileType[][], left: SlotInfo, right: SlotInfo): void {
+  const mapWidth = tiles[0]?.length ?? 0;
+  const mapHeight = tiles.length;
+
   // Find the best opening pair
   const leftOpenings = left.chunk.openings.right ?? [];
   const rightOpenings = right.chunk.openings.left ?? [];
@@ -379,7 +381,7 @@ function connectHorizontal(tiles: TileType[][], left: SlotInfo, right: SlotInfo)
 
     // Carve horizontal segment at hallwayRow
     for (let c = startCol - 1; c <= endCol; c++) {
-      if (c >= 0 && c < MAP_WIDTH && hallwayRow >= 0 && hallwayRow < MAP_HEIGHT) {
+      if (c >= 0 && c < mapWidth && hallwayRow >= 0 && hallwayRow < mapHeight) {
         if (tiles[hallwayRow][c] === TileType.Wall) {
           tiles[hallwayRow][c] = TileType.Floor;
         }
@@ -416,7 +418,7 @@ function connectHorizontal(tiles: TileType[][], left: SlotInfo, right: SlotInfo)
     const endCol = right.tileX;
 
     for (let c = startCol - 1; c <= endCol; c++) {
-      if (c >= 0 && c < MAP_WIDTH && hallwayRow >= 0 && hallwayRow < MAP_HEIGHT) {
+      if (c >= 0 && c < mapWidth && hallwayRow >= 0 && hallwayRow < mapHeight) {
         if (tiles[hallwayRow][c] === TileType.Wall) {
           tiles[hallwayRow][c] = TileType.Floor;
         }
@@ -441,6 +443,9 @@ function connectHorizontal(tiles: TileType[][], left: SlotInfo, right: SlotInfo)
 }
 
 function connectVertical(tiles: TileType[][], top: SlotInfo, bottom: SlotInfo): void {
+  const mapWidth = tiles[0]?.length ?? 0;
+  const mapHeight = tiles.length;
+
   const topOpenings = top.chunk.openings.bottom ?? [];
   const bottomOpenings = bottom.chunk.openings.top ?? [];
 
@@ -470,7 +475,7 @@ function connectVertical(tiles: TileType[][], top: SlotInfo, bottom: SlotInfo): 
     const endRow = bottom.tileY;
 
     for (let r = startRow - 1; r <= endRow; r++) {
-      if (r >= 0 && r < MAP_HEIGHT && hallwayCol >= 0 && hallwayCol < MAP_WIDTH) {
+      if (r >= 0 && r < mapHeight && hallwayCol >= 0 && hallwayCol < mapWidth) {
         if (tiles[r][hallwayCol] === TileType.Wall) {
           tiles[r][hallwayCol] = TileType.Floor;
         }
@@ -506,7 +511,7 @@ function connectVertical(tiles: TileType[][], top: SlotInfo, bottom: SlotInfo): 
     const endRow = bottom.tileY;
 
     for (let r = startRow - 1; r <= endRow; r++) {
-      if (r >= 0 && r < MAP_HEIGHT && hallwayCol >= 0 && hallwayCol < MAP_WIDTH) {
+      if (r >= 0 && r < mapHeight && hallwayCol >= 0 && hallwayCol < mapWidth) {
         if (tiles[r][hallwayCol] === TileType.Wall) {
           tiles[r][hallwayCol] = TileType.Floor;
         }

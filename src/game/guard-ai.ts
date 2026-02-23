@@ -1,4 +1,6 @@
-import { TileType, getTile, isWalkable } from "@/game/map";
+import { TileType, getTile, isWalkableWithDoors } from "@/game/map";
+
+export type DoorState = { x: number; y: number; open: boolean };
 
 // --- Constants ---
 
@@ -83,19 +85,32 @@ export interface CameraData {
   baseAngle: number;
 }
 
+/** Optional difficulty-based overrides for guard AI behavior */
+export interface GuardDifficultyConfig {
+  guardSpeed?: number;
+  guardAlertSpeed?: number;
+  guardRange?: number;
+  guardCrouchRange?: number;
+  cameraRange?: number;
+  cameraSweepSpeed?: number;
+}
+
 /** Compute camera sweep angle. Cameras oscillate back and forth (sinusoidal). */
 export function updateCameraAngle(
   baseAngle: number,
-  elapsed: number // total elapsed time in seconds since heist start
+  elapsed: number, // total elapsed time in seconds since heist start
+  sweepSpeed?: number
 ): number {
-  return baseAngle + Math.sin(elapsed * CAMERA_SWEEP_SPEED) * CAMERA_SWEEP_ARC;
+  return baseAngle + Math.sin(elapsed * (sweepSpeed ?? CAMERA_SWEEP_SPEED)) * CAMERA_SWEEP_ARC;
 }
 
 /** Check if a camera can see the Runner */
 export function canCameraSeeRunner(
   camera: { x: number; y: number; angle: number },
   runner: RunnerData,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: DoorState[],
+  diffConfig?: GuardDifficultyConfig
 ): boolean {
   if (runner.hiding) return false;
 
@@ -103,7 +118,8 @@ export function canCameraSeeRunner(
   const dy = runner.y - camera.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
 
-  const range = runner.crouching ? CAMERA_CROUCH_RANGE : CAMERA_RANGE;
+  const camRange = diffConfig?.cameraRange ?? CAMERA_RANGE;
+  const range = runner.crouching ? camRange - 2 : camRange;
   if (dist > range) return false;
 
   const angleToRunner = Math.atan2(dy, dx);
@@ -111,7 +127,7 @@ export function canCameraSeeRunner(
   const halfFovRad = ((CAMERA_FOV * Math.PI) / 180) / 2;
   if (diff > halfFovRad) return false;
 
-  if (!isLineOfSightClear(camera.x, camera.y, runner.x, runner.y, map)) {
+  if (!isLineOfSightClear(camera.x, camera.y, runner.x, runner.y, map, doors)) {
     return false;
   }
 
@@ -143,7 +159,8 @@ function isLineOfSightClear(
   y0: number,
   x1: number,
   y1: number,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: DoorState[]
 ): boolean {
   const dx = x1 - x0;
   const dy = y1 - y0;
@@ -154,8 +171,14 @@ function isLineOfSightClear(
     const t = i / steps;
     const cx = x0 + dx * t;
     const cy = y0 + dy * t;
-    const tile = getTile(map, Math.floor(cx), Math.floor(cy));
+    const col = Math.floor(cx);
+    const row = Math.floor(cy);
+    const tile = getTile(map, col, row);
     if (tile === TileType.Wall) return false;
+    if (tile === TileType.Door && doors) {
+      const door = doors.find((d) => d.x === col && d.y === row);
+      if (door && !door.open) return false;
+    }
   }
   return true;
 }
@@ -163,7 +186,9 @@ function isLineOfSightClear(
 export function canGuardSeeRunner(
   guard: { x: number; y: number; angle: number },
   runner: RunnerData,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: DoorState[],
+  diffConfig?: GuardDifficultyConfig
 ): boolean {
   // Hidden runners are invisible
   if (runner.hiding) return false;
@@ -173,7 +198,9 @@ export function canGuardSeeRunner(
   const dist = Math.sqrt(dx * dx + dy * dy);
 
   // Range check (reduced when crouching)
-  const range = runner.crouching ? GUARD_CROUCH_RANGE : GUARD_RANGE;
+  const range = runner.crouching
+    ? (diffConfig?.guardCrouchRange ?? GUARD_CROUCH_RANGE)
+    : (diffConfig?.guardRange ?? GUARD_RANGE);
   if (dist > range) return false;
 
   // FOV check
@@ -182,8 +209,8 @@ export function canGuardSeeRunner(
   const halfFovRad = ((GUARD_FOV * Math.PI) / 180) / 2;
   if (diff > halfFovRad) return false;
 
-  // Wall occlusion check
-  if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map)) {
+  // Wall and closed-door occlusion check
+  if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map, doors)) {
     return false;
   }
 
@@ -198,7 +225,8 @@ export function canGuardSeeRunner(
 export function canGuardHearRunner(
   guard: { x: number; y: number; state: GuardState },
   runner: RunnerData,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: DoorState[]
 ): boolean {
   if (!runner.moving) return false;
   if (runner.crouching) return false;
@@ -211,7 +239,7 @@ export function canGuardHearRunner(
 
   if (dist > NOISE_RADIUS_RUNNING) return false;
 
-  if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map)) {
+  if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map, doors)) {
     return false;
   }
 
@@ -220,14 +248,36 @@ export function canGuardHearRunner(
 
 // --- Movement ---
 
-function canGuardMoveTo(x: number, y: number, map: TileType[][]): boolean {
+function canGuardMoveTo(x: number, y: number, map: TileType[][], doors?: DoorState[]): boolean {
   const corners = [
     { col: Math.floor(x - GUARD_HITBOX_HALF), row: Math.floor(y - GUARD_HITBOX_HALF) },
     { col: Math.floor(x + GUARD_HITBOX_HALF), row: Math.floor(y - GUARD_HITBOX_HALF) },
     { col: Math.floor(x - GUARD_HITBOX_HALF), row: Math.floor(y + GUARD_HITBOX_HALF) },
     { col: Math.floor(x + GUARD_HITBOX_HALF), row: Math.floor(y + GUARD_HITBOX_HALF) },
   ];
-  return corners.every((c) => isWalkable(map, c.col, c.row));
+  return corners.every((c) => isWalkableWithDoors(map, c.col, c.row, doors));
+}
+
+/** Check if guard's next position would enter a closed door tile, and if so, open it */
+function guardOpenDoors(x: number, y: number, doors: DoorState[], map: TileType[][]): boolean {
+  let opened = false;
+  // Check the tiles the guard's hitbox touches
+  const corners = [
+    { col: Math.floor(x - GUARD_HITBOX_HALF), row: Math.floor(y - GUARD_HITBOX_HALF) },
+    { col: Math.floor(x + GUARD_HITBOX_HALF), row: Math.floor(y - GUARD_HITBOX_HALF) },
+    { col: Math.floor(x - GUARD_HITBOX_HALF), row: Math.floor(y + GUARD_HITBOX_HALF) },
+    { col: Math.floor(x + GUARD_HITBOX_HALF), row: Math.floor(y + GUARD_HITBOX_HALF) },
+  ];
+  for (const c of corners) {
+    if (getTile(map, c.col, c.row) === TileType.Door) {
+      const door = doors.find((d) => d.x === c.col && d.y === c.row);
+      if (door && !door.open) {
+        door.open = true;
+        opened = true;
+      }
+    }
+  }
+  return opened;
 }
 
 function moveToward(
@@ -237,7 +287,8 @@ function moveToward(
   toY: number,
   speed: number,
   dt: number,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: DoorState[]
 ): { x: number; y: number; angle: number } {
   const dx = toX - fromX;
   const dy = toY - fromY;
@@ -256,12 +307,12 @@ function moveToward(
 
   // Axis-separated collision: try X first, then Y
   const tryX = fromX + nx * step;
-  if (canGuardMoveTo(tryX, fromY, map)) {
+  if (canGuardMoveTo(tryX, fromY, map, doors)) {
     newX = tryX;
   }
 
   const tryY = fromY + ny * step;
-  if (canGuardMoveTo(newX, tryY, map)) {
+  if (canGuardMoveTo(newX, tryY, map, doors)) {
     newY = tryY;
   }
 
@@ -277,10 +328,14 @@ export function tickGuard(
   dt: number,
   map: TileType[][],
   now: number,
-  waypoints?: Array<{ x: number; y: number }>
+  waypoints?: Array<{ x: number; y: number }>,
+  doors?: DoorState[],
+  diffConfig?: GuardDifficultyConfig
 ): GuardUpdate {
   const wps = waypoints ?? DEFAULT_GUARD_WAYPOINTS[guard.id] ?? [];
-  const canSee = canGuardSeeRunner(guard, runner, map);
+  const canSee = canGuardSeeRunner(guard, runner, map, doors, diffConfig);
+  const patrolSpeed = diffConfig?.guardSpeed ?? GUARD_SPEED;
+  const chaseSpeed = diffConfig?.guardAlertSpeed ?? GUARD_ALERT_SPEED;
 
   switch (guard.state) {
     case "patrol": {
@@ -300,7 +355,7 @@ export function tickGuard(
       }
 
       // If guard hears runner → go suspicious (investigate noise source)
-      const canHearPatrol = canGuardHearRunner(guard, runner, map);
+      const canHearPatrol = canGuardHearRunner(guard, runner, map, doors);
       const noiseCooldownOkPatrol = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
       if (canHearPatrol && noiseCooldownOkPatrol) {
         return {
@@ -358,8 +413,15 @@ export function tickGuard(
         };
       }
 
+      // Guard opens closed doors in its path before moving
+      if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
+
       // Move toward current waypoint
-      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, GUARD_SPEED, dt, map);
+      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, patrolSpeed, dt, map, doors);
+
+      // Open any door the guard enters
+      if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
+
       return {
         x: moved.x,
         y: moved.y,
@@ -419,7 +481,9 @@ export function tickGuard(
       }
 
       // Move toward last known position
-      const moved = moveToward(guard.x, guard.y, lkx, lky, GUARD_SPEED, dt, map);
+      if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
+      const moved = moveToward(guard.x, guard.y, lkx, lky, patrolSpeed, dt, map, doors);
+      if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       return {
         x: moved.x,
         y: moved.y,
@@ -493,7 +557,9 @@ export function tickGuard(
       }
 
       // Move toward last known position
-      const moved = moveToward(guard.x, guard.y, lkx, lky, GUARD_ALERT_SPEED, dt, map);
+      if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
+      const moved = moveToward(guard.x, guard.y, lkx, lky, chaseSpeed, dt, map, doors);
+      if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       const faceAngle = canSee
         ? Math.atan2(runner.y - guard.y, runner.x - guard.x)
         : moved.angle;
@@ -528,7 +594,7 @@ export function tickGuard(
       }
 
       // If guard hears runner → go suspicious
-      const canHearReturning = canGuardHearRunner(guard, runner, map);
+      const canHearReturning = canGuardHearRunner(guard, runner, map, doors);
       const noiseCooldownOkReturning = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
       if (canHearReturning && noiseCooldownOkReturning) {
         return {
@@ -584,7 +650,9 @@ export function tickGuard(
         };
       }
 
-      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, GUARD_SPEED, dt, map);
+      if (doors) guardOpenDoors(guard.x, guard.y, doors, map);
+      const moved = moveToward(guard.x, guard.y, wp.x, wp.y, patrolSpeed, dt, map, doors);
+      if (doors) guardOpenDoors(moved.x, moved.y, doors, map);
       return {
         x: moved.x,
         y: moved.y,

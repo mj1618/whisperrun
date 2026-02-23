@@ -444,6 +444,44 @@ export function drawDoorTile(
   ctx.fill();
 }
 
+export function drawOpenDoorTile(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number
+): void {
+  // Floor underneath (same as regular floor)
+  ctx.fillStyle = "#E8D5B7";
+  ctx.fillRect(x, y, TILE, TILE);
+
+  // Subtle plank lines
+  ctx.strokeStyle = "rgba(140, 110, 70, 0.2)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(x, y + Math.floor(TILE / 3));
+  ctx.lineTo(x + TILE, y + Math.floor(TILE / 3));
+  ctx.moveTo(x, y + Math.floor((TILE * 2) / 3));
+  ctx.lineTo(x + TILE, y + Math.floor((TILE * 2) / 3));
+  ctx.stroke();
+
+  // Door "swung open" — thin slab on the left edge
+  ctx.fillStyle = "rgba(160, 128, 96, 0.5)";
+  ctx.fillRect(x, y + 2, 4, TILE - 4);
+  ctx.strokeStyle = "rgba(139, 107, 74, 0.5)";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(x, y + 2, 4, TILE - 4);
+
+  // Doorknob on the swung-open slab
+  ctx.fillStyle = "rgba(218, 165, 32, 0.6)";
+  ctx.beginPath();
+  ctx.arc(x + 2, y + TILE / 2, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Subtle grid line
+  ctx.strokeStyle = "rgba(0,0,0,0.06)";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(x, y, TILE, TILE);
+}
+
 export function drawHideSpotTile(
   ctx: CanvasRenderingContext2D,
   x: number,
