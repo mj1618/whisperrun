@@ -9,6 +9,9 @@
 import { Camera } from "@/engine/camera";
 import { TILE_SIZE } from "@/engine/renderer";
 import { getPingColor, PING_DURATION_MS } from "@/game/ping-system";
+import type { EscalationEvent } from "@/game/guard-ai";
+import type { Distraction } from "@/game/distractions";
+import { THROW_FLIGHT_TIME, NOISE_ATTRACT_RADIUS } from "@/game/distractions";
 
 export function renderFogOfWar(
   ctx: CanvasRenderingContext2D,
@@ -87,6 +90,85 @@ export function renderFogOfWar(
     ctx.beginPath();
     ctx.arc(particleX, particleY, 1.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+}
+
+/**
+ * Render throwable distraction visuals in the Runner's view.
+ * Shows in-flight arc animation, landed coin dot, and noise rings.
+ */
+export function renderDistractions(
+  ctx: CanvasRenderingContext2D,
+  distractions: Distraction[],
+  now: number,
+  camera: Camera,
+  tileSize: number
+): void {
+  for (const d of distractions) {
+    const elapsed = now - d.thrownAt;
+
+    if (elapsed < THROW_FLIGHT_TIME) {
+      // In-flight arc animation
+      const progress = elapsed / THROW_FLIGHT_TIME;
+      const arcX = d.fromX + (d.x - d.fromX) * progress;
+      const arcY = d.fromY + (d.y - d.fromY) * progress;
+      const arcHeight = Math.sin(progress * Math.PI) * 1.5;
+
+      const screen = camera.worldToScreen(
+        arcX * tileSize + tileSize / 2,
+        (arcY - arcHeight) * tileSize + tileSize / 2
+      );
+      const shadow = camera.worldToScreen(
+        arcX * tileSize + tileSize / 2,
+        arcY * tileSize + tileSize / 2
+      );
+
+      // Shadow on ground
+      ctx.save();
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.2 * (1 - progress)})`;
+      ctx.beginPath();
+      ctx.ellipse(shadow.x, shadow.y, 3, 1.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Coin
+      ctx.save();
+      ctx.fillStyle = "#FFD700";
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (elapsed < THROW_FLIGHT_TIME + d.noiseDurationMs) {
+      // Landed — noise rings
+      const noiseProgress = (elapsed - THROW_FLIGHT_TIME) / d.noiseDurationMs;
+      const screen = camera.worldToScreen(
+        d.x * tileSize + tileSize / 2,
+        d.y * tileSize + tileSize / 2
+      );
+
+      // Gold dot
+      ctx.save();
+      ctx.fillStyle = "#FFD700";
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Expanding noise rings
+      for (let ring = 0; ring < 3; ring++) {
+        const ringProgress = Math.max(0, noiseProgress - ring * 0.2);
+        if (ringProgress <= 0) continue;
+        const radius = ringProgress * NOISE_ATTRACT_RADIUS * tileSize * 0.4;
+        const alpha = 0.4 * (1 - ringProgress);
+        ctx.save();
+        ctx.strokeStyle = `rgba(255, 200, 50, ${alpha})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   }
 }
 
@@ -174,6 +256,58 @@ export function renderPathForRunner(
       ctx.fill();
       ctx.restore();
     }
+  }
+}
+
+const ESCALATION_VISUAL_DURATION = 1500; // ms
+
+/**
+ * Render radio wave expanding rings at escalating guard positions.
+ * Only visible if the guard is within the Runner's fog-of-war radius.
+ */
+export function renderEscalationWaves(
+  ctx: CanvasRenderingContext2D,
+  events: Array<EscalationEvent & { fadeUntil: number }>,
+  guards: Array<{ id: string; x: number; y: number }>,
+  now: number,
+  camera: Camera,
+  runnerX: number,
+  runnerY: number,
+  fogRadius: number
+): void {
+  for (const event of events) {
+    const progress = 1 - (event.fadeUntil - now) / ESCALATION_VISUAL_DURATION;
+    if (progress < 0 || progress > 1) continue;
+    const alpha = 1 - progress;
+
+    // Find source guard position
+    const sourceGuard = guards.find((g) => g.id === event.sourceGuardId);
+    if (!sourceGuard) continue;
+
+    // Check if guard is within Runner's fog-of-war visibility
+    const distToRunner = Math.hypot(sourceGuard.x - runnerX, sourceGuard.y - runnerY);
+    if (distToRunner > fogRadius) continue;
+
+    const screen = camera.worldToScreen(
+      sourceGuard.x * TILE_SIZE + TILE_SIZE / 2,
+      sourceGuard.y * TILE_SIZE + TILE_SIZE / 2
+    );
+
+    // Draw 2-3 expanding orange rings
+    ctx.save();
+    for (let ring = 0; ring < 3; ring++) {
+      const ringProgress = Math.max(0, progress - ring * 0.15);
+      const radius = ringProgress * 40;
+      const ringAlpha = alpha * (1 - ring * 0.3);
+      if (ringAlpha <= 0) continue;
+
+      ctx.strokeStyle = `rgba(255, 180, 50, ${ringAlpha})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 }
 

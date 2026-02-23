@@ -385,6 +385,59 @@ export function playRadioChatter(): void {
   chirp.stop(now + 0.26);
 }
 
+/** Distraction throw — soft whoosh arc */
+export function playThrowSound(): void {
+  if (!audioCtx || !masterGain) return;
+  const now = audioCtx.currentTime;
+
+  const osc = audioCtx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(400, now);
+  osc.frequency.exponentialRampToValueAtTime(200, now + 0.2);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.15, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+  osc.connect(gain).connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.26);
+}
+
+/** Distraction coin landing — metallic clink with bounce */
+export function playCoinLand(): void {
+  if (!audioCtx || !masterGain) return;
+  const now = audioCtx.currentTime;
+
+  // Primary clink
+  const osc = audioCtx.createOscillator();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(2400, now);
+  osc.frequency.exponentialRampToValueAtTime(1200, now + 0.08);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.2, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+  osc.connect(gain).connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.16);
+
+  // Second bounce (quieter, slightly delayed)
+  const osc2 = audioCtx.createOscillator();
+  osc2.type = "triangle";
+  osc2.frequency.setValueAtTime(2000, now + 0.08);
+  osc2.frequency.exponentialRampToValueAtTime(1000, now + 0.14);
+
+  const gain2 = audioCtx.createGain();
+  gain2.gain.setValueAtTime(0.08, now + 0.08);
+  gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+  osc2.connect(gain2).connect(masterGain);
+  osc2.start(now + 0.08);
+  osc2.stop(now + 0.19);
+}
+
 /** Countdown tick — short click for last 10 seconds */
 export function playCountdownTick(): void {
   playTone(1000, 0.02, "sine", 0.1);

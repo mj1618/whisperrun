@@ -28,6 +28,8 @@ export interface DifficultyConfig {
   laserOffMs: number;
   // Guard alert escalation
   guardAlertRadius: number;
+  // Throwable distractions
+  maxDistractions: number;
 }
 
 export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
@@ -53,6 +55,7 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     laserOnMs: 3000,
     laserOffMs: 3000,
     guardAlertRadius: 0,
+    maxDistractions: 4,
   },
   standard: {
     label: "Standard",
@@ -76,6 +79,7 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     laserOnMs: 3000,
     laserOffMs: 2500,
     guardAlertRadius: 8,
+    maxDistractions: 3,
   },
   hard: {
     label: "Hard",
@@ -99,6 +103,7 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     laserOnMs: 3500,
     laserOffMs: 1500,
     guardAlertRadius: 12,
+    maxDistractions: 2,
   },
 };
 

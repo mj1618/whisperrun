@@ -36,6 +36,18 @@ import {
 import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
 import { EventRecorder, GameEvent, PositionPoint } from "@/game/events";
 import {
+  Distraction,
+  createDistraction,
+  isValidThrowTarget,
+  isDistractionActive,
+  isDistractionNoisy,
+  THROW_COOLDOWN,
+  THROW_FLIGHT_TIME,
+  NOISE_ATTRACT_RADIUS,
+} from "@/game/distractions";
+import { renderDistractions } from "@/game/runner-view";
+import { renderWhisperDistractions } from "@/game/whisper-view";
+import {
   initAudio,
   isAudioReady,
   resumeAudio,
@@ -57,6 +69,8 @@ import {
   playQuickCommSound,
   playLaserAlarm,
   playRadioChatter,
+  playThrowSound,
+  playCoinLand,
 } from "@/engine/audio";
 import HUD from "@/components/HUD";
 import { QUICK_COMM_MESSAGES, QUICK_COMM_COOLDOWN_MS } from "@/game/quick-comms";
@@ -370,6 +384,18 @@ export default function GameCanvas({
   // Force periodic re-render for HUD timer
   const [, setTick] = useState(0);
   const [hudCrouching, setHudCrouching] = useState(false);
+
+  // Distraction state (client-side only, Runner drives this)
+  const [hudDistractionsRemaining, setHudDistractionsRemaining] = useState(0);
+  const distractionsRemainingRef = useRef(0);
+  const activeDistractionsRef = useRef<Distraction[]>([]);
+  const lastThrowTimeRef = useRef(0);
+  const setHudDistractionsRemainingRef = useRef(setHudDistractionsRemaining);
+  useEffect(() => { setHudDistractionsRemainingRef.current = setHudDistractionsRemaining; }, [setHudDistractionsRemaining]);
+  // Mobile aim mode for throw
+  const [aimModeActive, setAimModeActive] = useState(false);
+  const aimModeActiveRef = useRef(false);
+  useEffect(() => { aimModeActiveRef.current = aimModeActive; }, [aimModeActive]);
 
   // Whisper ping type selection
   const [selectedPingType, setSelectedPingType] = useState<"go" | "danger" | "item">("go");
@@ -1125,7 +1151,6 @@ export default function GameCanvas({
           const alertRadius = diffConfigRef.current.guardAlertRadius;
           if (alertRadius > 0) {
             const escalations = processAlertEscalation(
-              localGuardsRef.current,
               previousGuardStates,
               localGuardsRef.current,
               now,

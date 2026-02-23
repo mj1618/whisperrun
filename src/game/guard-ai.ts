@@ -58,6 +58,88 @@ export interface GuardUpdate {
   noiseCooldownUntil?: number;
 }
 
+// --- Alert Escalation Constants ---
+
+export const GUARD_ALERT_RADIUS = 8; // tiles — how far a guard's alert carries
+export const GUARD_ESCALATION_COOLDOWN = 8000; // ms — prevent repeated cascading from same source
+
+export interface EscalationEvent {
+  sourceGuardId: string;
+  targetGuardId: string;
+  alertX: number;
+  alertY: number;
+  timestamp: number;
+}
+
+/**
+ * After ticking all guards individually, check for alert escalation:
+ * If any guard just transitioned to "alert" state this tick, nearby guards
+ * in "patrol" or "returning" state become "suspicious" toward the alert location.
+ *
+ * Returns a list of escalation events (for visual/audio feedback).
+ */
+export function processAlertEscalation(
+  previousStates: Map<string, GuardState>,
+  currentGuards: GuardData[],
+  now: number,
+  escalationCooldowns: Map<string, number>,
+  alertRadius?: number
+): EscalationEvent[] {
+  const radius = alertRadius ?? GUARD_ALERT_RADIUS;
+  if (radius <= 0) return [];
+
+  const events: EscalationEvent[] = [];
+
+  for (const guard of currentGuards) {
+    const prevState = previousStates.get(guard.id);
+
+    // Check if this guard just became alert (transition from non-alert → alert)
+    const justBecameAlert = guard.state === "alert" && prevState !== "alert";
+    if (!justBecameAlert) continue;
+
+    // This guard raised the alarm — check nearby guards
+    for (const other of currentGuards) {
+      if (other.id === guard.id) continue;
+
+      // Only escalate to guards that are currently patrolling or returning
+      if (other.state !== "patrol" && other.state !== "returning") continue;
+
+      // Check cooldown — don't repeatedly escalate to the same guard
+      const cooldownKey = `${guard.id}->${other.id}`;
+      const cooldownUntil = escalationCooldowns.get(cooldownKey);
+      if (cooldownUntil && now < cooldownUntil) continue;
+
+      // Distance check (in tiles)
+      const dx = other.x - guard.x;
+      const dy = other.y - guard.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > radius) continue;
+
+      // Escalate! Make the other guard suspicious toward the alert location
+      const alertX = guard.lastKnownX ?? guard.x;
+      const alertY = guard.lastKnownY ?? guard.y;
+
+      other.state = "suspicious";
+      other.lastKnownX = alertX;
+      other.lastKnownY = alertY;
+      other.stateTimer = now;
+
+      // Set cooldown
+      escalationCooldowns.set(cooldownKey, now + GUARD_ESCALATION_COOLDOWN);
+
+      events.push({
+        sourceGuardId: guard.id,
+        targetGuardId: other.id,
+        alertX,
+        alertY,
+        timestamp: now,
+      });
+    }
+  }
+
+  return events;
+}
+
 // --- Default Patrol Waypoints (fallback for legacy maps) ---
 
 export const DEFAULT_GUARD_WAYPOINTS: Record<string, Array<{ x: number; y: number }>> = {

@@ -25,6 +25,7 @@ export function calculateScore(
   const hideEscapeCount = events.filter((e) => e.type === "hide_escape").length;
   const laserTripCount = events.filter((e) => e.type === "laser_tripped").length;
   const escalationCount = events.filter((e) => e.type === "guard_escalation").length;
+  const distractionCount = events.filter((e) => e.type === "distraction_thrown").length;
   const panicMoments = alertCount + nearMissCount + laserTripCount + escalationCount;
 
   const nearMissDistances = events
@@ -53,6 +54,7 @@ export function calculateScore(
   let stylePoints = 0;
   stylePoints += sneakCount * 75;
   stylePoints += hideEscapeCount * 100;
+  stylePoints += distractionCount * 25;
   if (outcome === "escaped") {
     stylePoints += nearMissCount * 50;
   }
@@ -70,7 +72,8 @@ export function calculateScore(
     alertCount,
     nearMissCount,
     sneakCount,
-    heistDurationMs
+    heistDurationMs,
+    distractionCount
   );
 
   const total = timeBonus + stealthBonus + stylePoints;
@@ -95,7 +98,8 @@ function getPlayStyleTitle(
   alerts: number,
   nearMisses: number,
   sneaks: number,
-  durationMs: number
+  durationMs: number,
+  distractions: number = 0
 ): string {
   if (outcome === "caught") {
     if (alerts === 0) return "Wrong Place, Wrong Time";
@@ -105,6 +109,7 @@ function getPlayStyleTitle(
     return "The Indecisive Burglar";
   }
   // Escaped:
+  if (distractions >= 3) return "Master Manipulator";
   if (alerts === 0 && nearMisses === 0) return "Ghost";
   if (alerts === 0 && sneaks >= 3) return "Shadow Dancer";
   if (durationMs < 45_000) return "Speed Demon";

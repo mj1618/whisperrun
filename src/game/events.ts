@@ -13,6 +13,7 @@ export type GameEventType =
   | "laser_tripped"
   | "guard_escalation"
   | "quick_comm"
+  | "distraction_thrown"
   | "escape"
   | "caught"
   | "timeout";

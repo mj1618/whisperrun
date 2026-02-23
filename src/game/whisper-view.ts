@@ -10,6 +10,9 @@ import { LocalGameState } from "@/game/game-state";
 import { TILE_SIZE } from "@/engine/renderer";
 import { getPingColor, PING_DURATION_MS } from "@/game/ping-system";
 import { updateCameraAngle, CAMERA_RANGE, CAMERA_FOV, GUARD_RANGE } from "@/game/guard-ai";
+import type { EscalationEvent } from "@/game/guard-ai";
+import type { Distraction } from "@/game/distractions";
+import { THROW_FLIGHT_TIME, NOISE_ATTRACT_RADIUS } from "@/game/distractions";
 
 // Blueprint color palette
 const BP_FLOOR = "#141e30";
@@ -524,6 +527,128 @@ export function renderPathPreview(
   }
   ctx.stroke();
   ctx.restore();
+}
+
+const ESCALATION_LINE_DURATION = 1500; // ms
+
+/**
+ * Render dashed communication lines between guards during alert escalation.
+ * Called inside the Whisper's transform block (world-space coords).
+ */
+export function renderEscalationLines(
+  ctx: CanvasRenderingContext2D,
+  events: Array<EscalationEvent & { fadeUntil: number }>,
+  guards: Array<{ id: string; x: number; y: number }>,
+  now: number
+): void {
+  for (const event of events) {
+    const progress = 1 - (event.fadeUntil - now) / ESCALATION_LINE_DURATION;
+    if (progress < 0 || progress > 1) continue;
+    const alpha = 1 - progress;
+
+    const source = guards.find((g) => g.id === event.sourceGuardId);
+    const target = guards.find((g) => g.id === event.targetGuardId);
+    if (!source || !target) continue;
+
+    const sx = source.x * TILE_SIZE + TILE_SIZE / 2;
+    const sy = source.y * TILE_SIZE + TILE_SIZE / 2;
+    const tx = target.x * TILE_SIZE + TILE_SIZE / 2;
+    const ty = target.y * TILE_SIZE + TILE_SIZE / 2;
+
+    // Dashed orange line between source and target
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = "#FFB432";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+
+    // Small radio wave icon at midpoint
+    const mx = (sx + tx) / 2;
+    const my = (sy + ty) / 2;
+    const ringRadius = 4 + progress * 8;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.strokeStyle = "#FFB432";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(mx, my, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+/**
+ * Render throwable distraction visuals on the Whisper blueprint.
+ * Always visible (no fog-of-war). Called inside the transform block.
+ */
+export function renderWhisperDistractions(
+  ctx: CanvasRenderingContext2D,
+  distractions: Distraction[],
+  now: number
+): void {
+  for (const d of distractions) {
+    const elapsed = now - d.thrownAt;
+
+    if (elapsed < THROW_FLIGHT_TIME) {
+      // In-flight: show arc trajectory line
+      const progress = elapsed / THROW_FLIGHT_TIME;
+      const fromPx = d.fromX * TILE_SIZE + TILE_SIZE / 2;
+      const fromPy = d.fromY * TILE_SIZE + TILE_SIZE / 2;
+      const toPx = d.x * TILE_SIZE + TILE_SIZE / 2;
+      const toPy = d.y * TILE_SIZE + TILE_SIZE / 2;
+
+      // Dashed gold arc line
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(255, 215, 0, 0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(fromPx, fromPy);
+      ctx.lineTo(toPx, toPy);
+      ctx.stroke();
+      ctx.restore();
+
+      // Moving coin dot along the arc
+      const cx = fromPx + (toPx - fromPx) * progress;
+      const cy = fromPy + (toPy - fromPy) * progress;
+      ctx.save();
+      ctx.fillStyle = "#FFD700";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (elapsed < THROW_FLIGHT_TIME + d.noiseDurationMs) {
+      // Landed — gold dot with expanding dashed noise radius
+      const noiseProgress = (elapsed - THROW_FLIGHT_TIME) / d.noiseDurationMs;
+      const px = d.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = d.y * TILE_SIZE + TILE_SIZE / 2;
+
+      // Gold dot
+      ctx.save();
+      ctx.fillStyle = "#FFD700";
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Expanding dashed noise circle
+      const radius = noiseProgress * NOISE_ATTRACT_RADIUS * TILE_SIZE;
+      const alpha = 0.5 * (1 - noiseProgress);
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }
 
 function drawDiamond(
