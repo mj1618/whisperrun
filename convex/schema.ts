@@ -23,6 +23,11 @@ export default defineSchema({
       v.literal("finished")
     ),
     mapSeed: v.number(),
+    difficulty: v.optional(v.union(
+      v.literal("casual"),
+      v.literal("standard"),
+      v.literal("hard")
+    )),
     createdAt: v.number(),
     disconnectedAt: v.optional(v.number()),
     disconnectedPlayer: v.optional(v.string()),
@@ -91,6 +96,12 @@ export default defineSchema({
         open: v.boolean(),
       })
     ),
+    paths: v.array(
+      v.object({
+        points: v.array(v.object({ x: v.number(), y: v.number() })),
+        createdAt: v.number(),
+      })
+    ),
     exitX: v.number(),
     exitY: v.number(),
     phase: v.union(
@@ -101,7 +112,29 @@ export default defineSchema({
       v.literal("timeout"),
       v.literal("disconnected")
     ),
+    difficulty: v.optional(v.union(
+      v.literal("casual"),
+      v.literal("standard"),
+      v.literal("hard")
+    )),
     startTime: v.number(),
     heistStartTime: v.optional(v.number()),
   }).index("by_roomId", ["roomId"]),
+
+  leaderboard: defineTable({
+    dateKey: v.string(),
+    roomCode: v.string(),
+    teamName: v.string(),
+    score: v.number(),
+    timeBonus: v.number(),
+    stealthBonus: v.number(),
+    stylePoints: v.number(),
+    stealthRating: v.number(),
+    heistDurationMs: v.number(),
+    playStyleTitle: v.string(),
+    outcome: v.string(),
+    submittedAt: v.number(),
+  })
+    .index("by_dateKey_score", ["dateKey", "score"])
+    .index("by_roomCode", ["roomCode"]),
 });

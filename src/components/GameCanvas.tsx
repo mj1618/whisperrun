@@ -10,15 +10,16 @@ import { Camera } from "@/engine/camera";
 import { InputHandler } from "@/engine/input";
 import { TouchInputManager, isTouchDevice } from "@/engine/touch-input";
 import { TouchControls } from "@/components/TouchControls";
-import { isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
+import { isWalkable, isWalkableWithDoors, getMapWidth, getMapHeight, TileType } from "@/game/map";
 import { generateMap, GeneratedMap } from "@/game/map-generator";
 import { GameStateManager, LocalGameState } from "@/game/game-state";
-import { renderFogOfWar, renderPings } from "@/game/runner-view";
-import { renderBlueprintMap, renderWhisperEntities } from "@/game/whisper-view";
+import { renderFogOfWar, renderPings, renderPathForRunner } from "@/game/runner-view";
+import { renderBlueprintMap, renderWhisperEntities, renderPaths, renderPathPreview } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
 import {
   tickGuard,
   GuardData,
+  DoorState,
   canGuardSeeRunner,
   canCameraSeeRunner,
   updateCameraAngle,
@@ -45,6 +46,8 @@ import {
   stopAmbientLoop,
   playCountdownTick,
   playCountdownUrgent,
+  playDoorOpen,
+  playDoorClose,
 } from "@/engine/audio";
 import HUD from "@/components/HUD";
 
@@ -71,14 +74,20 @@ const HITBOX_HALF = 0.3;
 // Planning phase duration in ms
 const PLANNING_DURATION = 30_000;
 
-function canMoveTo(x: number, y: number, map: TileType[][]): boolean {
+function canMoveTo(x: number, y: number, map: TileType[][], doors?: DoorState[]): boolean {
   const corners = [
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y - HITBOX_HALF) },
     { col: Math.floor(x + HITBOX_HALF), row: Math.floor(y - HITBOX_HALF) },
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
     { col: Math.floor(x + HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
   ];
-  return corners.every((c) => isWalkable(map, c.col, c.row));
+  return corners.every((c) => isWalkableWithDoors(map, c.col, c.row, doors));
+}
+
+interface InteractionResult {
+  action: "exit" | "pickup" | "hide" | "unhide" | "toggleDoor";
+  doorX?: number;
+  doorY?: number;
 }
 
 function getInteraction(
@@ -88,10 +97,12 @@ function getInteraction(
   hiding: boolean,
   state: LocalGameState,
   map: TileType[][]
-): "exit" | "pickup" | "hide" | "unhide" | null {
+): InteractionResult | null {
+  if (hiding) return { action: "unhide" };
+
   if (hasItem) {
     const dist = Math.hypot(state.exitX - x, state.exitY - y);
-    if (dist < 1.5) return "exit";
+    if (dist < 1.5) return { action: "exit" };
   }
 
   const nearItem = state.items.find(
@@ -100,9 +111,7 @@ function getInteraction(
       Math.abs(item.x - x) < 1.5 &&
       Math.abs(item.y - y) < 1.5
   );
-  if (nearItem) return "pickup";
-
-  if (hiding) return "unhide";
+  if (nearItem) return { action: "pickup" };
 
   const tileCol = Math.round(x);
   const tileRow = Math.round(y);
@@ -118,11 +127,23 @@ function getInteraction(
       ) {
         if (map[r][c] === TileType.HideSpot) {
           const dist = Math.hypot(c - x, r - y);
-          if (dist < 1.5) return "hide";
+          if (dist < 1.5) return { action: "hide" };
         }
       }
     }
   }
+
+  // Door toggle — lowest priority
+  let nearestDoorDist = Infinity;
+  let nearestDoor: { x: number; y: number } | null = null;
+  for (const door of state.doors) {
+    const dist = Math.hypot(door.x + 0.5 - x, door.y + 0.5 - y);
+    if (dist < 1.5 && dist < nearestDoorDist) {
+      nearestDoorDist = dist;
+      nearestDoor = door;
+    }
+  }
+  if (nearestDoor) return { action: "toggleDoor", doorX: nearestDoor.x, doorY: nearestDoor.y };
 
   return null;
 }
@@ -208,6 +229,10 @@ function PlanningOverlay({
                   <span className="text-[#FFD700]">1 / 2 / 3</span>
                   <span className="text-[#8BB8E8]/70">Switch ping type</span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-[#00E5FF]">Shift+Drag</span>
+                  <span className="text-[#8BB8E8]/70">Draw a route for the Runner</span>
+                </div>
                 <div className="mt-2 space-y-1 text-xs">
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#44FF44]" />
@@ -245,6 +270,7 @@ function PlanningOverlay({
             ) : (
               <ul className="text-[#8BB8E8]/60 text-xs space-y-1 list-disc list-inside">
                 <li>You can have up to 3 active pings</li>
+                <li>Shift+Drag to draw a route &mdash; Runner sees it as a glowing trail</li>
                 <li>Watch the guard patrol routes (dashed lines)</li>
                 <li>The Runner has limited vision &mdash; you&apos;re their eyes</li>
               </ul>
@@ -335,7 +361,10 @@ export default function GameCanvas({
   const startHeistPhase = useMutation(api.game.startHeistPhase);
   const addPing = useMutation(api.game.addPing);
   const cleanupPings = useMutation(api.game.cleanupPings);
+  const drawPathMutation = useMutation(api.game.drawPath);
+  const cleanupPathsMutation = useMutation(api.game.cleanupPaths);
   const tickGuardsMutation = useMutation(api.game.tickGuards);
+  const toggleDoorMutation = useMutation(api.game.toggleDoor);
   const checkTimeout = useMutation(api.game.checkTimeout);
 
   // Store mutations/setters in refs so game loop can access them
@@ -343,6 +372,7 @@ export default function GameCanvas({
   const interactRunnerRef = useRef(interactRunner);
   const addPingRef = useRef(addPing);
   const tickGuardsRef = useRef(tickGuardsMutation);
+  const toggleDoorRef = useRef(toggleDoorMutation);
   const setHudCrouchingRef = useRef(setHudCrouching);
   const startHeistPhaseRef = useRef(startHeistPhase);
   const checkTimeoutRef = useRef(checkTimeout);
@@ -350,14 +380,17 @@ export default function GameCanvas({
     moveRunnerRef.current = moveRunner;
     interactRunnerRef.current = interactRunner;
     addPingRef.current = addPing;
+    drawPathRef.current = drawPathMutation;
     tickGuardsRef.current = tickGuardsMutation;
+    toggleDoorRef.current = toggleDoorMutation;
     setHudCrouchingRef.current = setHudCrouching;
     startHeistPhaseRef.current = startHeistPhase;
     checkTimeoutRef.current = checkTimeout;
-  }, [moveRunner, interactRunner, addPing, tickGuardsMutation, setHudCrouching, startHeistPhase, checkTimeout]);
+  }, [moveRunner, interactRunner, addPing, drawPathMutation, tickGuardsMutation, toggleDoorMutation, setHudCrouching, startHeistPhase, checkTimeout]);
 
   // Local guard state for client-side prediction (Runner client drives guard AI)
   const localGuardsRef = useRef<GuardData[]>([]);
+  const localDoorsRef = useRef<DoorState[]>([]);
   const guardsInitializedRef = useRef(false);
 
   // Guard alert state for HUD
@@ -369,6 +402,11 @@ export default function GameCanvas({
 
   // Blueprint zoom state stored in ref so click handler can access it
   const blueprintTransformRef = useRef({ offsetX: 0, offsetY: 0, scale: 1 });
+
+  // Whisper path drawing state
+  const drawingPathPointsRef = useRef<Array<{ x: number; y: number }>>([]);
+  const drawPathRef = useRef(drawPathMutation);
+  const drawModeRef = useRef(false);
 
   // Disconnect warning state
   const [showDisconnectWarning, setShowDisconnectWarning] = useState(false);
@@ -422,6 +460,7 @@ export default function GameCanvas({
       doors: gameState.doors ?? [],
       items: gameState.items,
       pings: gameState.pings,
+      paths: gameState.paths ?? [],
       exitX: gameState.exitX,
       exitY: gameState.exitY,
       phase: gameState.phase,
@@ -429,6 +468,10 @@ export default function GameCanvas({
       heistStartTime: gameState.heistStartTime,
     };
     gameStateManagerRef.current.setServerState(local);
+    // Keep local doors in sync before guard AI takes over
+    if (local.doors.length > 0 && !guardsInitializedRef.current) {
+      localDoorsRef.current = local.doors.map((d) => ({ ...d }));
+    }
   }, [gameState]);
 
   // Initialize audio on first user interaction (click, key, or touch)
@@ -460,14 +503,15 @@ export default function GameCanvas({
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
-  // Whisper: cleanup expired pings every 2 seconds
+  // Whisper: cleanup expired pings and paths every 2 seconds
   useEffect(() => {
     if (role !== "whisper") return;
     const interval = setInterval(() => {
       cleanupPings({ roomId });
+      cleanupPathsMutation({ roomId });
     }, 2000);
     return () => clearInterval(interval);
-  }, [role, roomId, cleanupPings]);
+  }, [role, roomId, cleanupPings, cleanupPathsMutation]);
 
   // Whisper: ping type keyboard shortcuts (1/2/3)
   useEffect(() => {
@@ -488,6 +532,7 @@ export default function GameCanvas({
     if (!canvas) return;
 
     const handleClick = (e: MouseEvent) => {
+      if (e.shiftKey || drawModeRef.current) return; // Shift+click or draw mode = path drawing, not ping
       const state = gameStateManagerRef.current.getState();
       if (!state) return;
       if (state.phase !== "planning" && state.phase !== "heist") return;
@@ -522,6 +567,87 @@ export default function GameCanvas({
 
     canvas.addEventListener("pointerdown", handleClick);
     return () => canvas.removeEventListener("pointerdown", handleClick);
+  }, [role, roomId]);
+
+  // Whisper: Shift+drag path drawing (or draw mode on mobile)
+  useEffect(() => {
+    if (role !== "whisper") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    let isDrawing = false;
+    const pathPoints: Array<{ x: number; y: number }> = [];
+    const MIN_POINT_DISTANCE = 0.5;
+
+    const screenToTile = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const screenX = (clientX - rect.left) * (canvas.width / rect.width);
+      const screenY = (clientY - rect.top) * (canvas.height / rect.height);
+      const { offsetX, offsetY, scale } = blueprintTransformRef.current;
+      return screenToTileWhisper(screenX, screenY, offsetX, offsetY, scale);
+    };
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (!e.shiftKey && !drawModeRef.current) return;
+      const state = gameStateManagerRef.current.getState();
+      if (!state) return;
+      if (state.phase !== "planning" && state.phase !== "heist") return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      isDrawing = true;
+      pathPoints.length = 0;
+
+      const tile = screenToTile(e.clientX, e.clientY);
+      pathPoints.push({ x: tile.x, y: tile.y });
+      drawingPathPointsRef.current = [...pathPoints];
+
+      canvas.setPointerCapture(e.pointerId);
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!isDrawing) return;
+
+      const tile = screenToTile(e.clientX, e.clientY);
+      const last = pathPoints[pathPoints.length - 1];
+      const dist = Math.hypot(tile.x - last.x, tile.y - last.y);
+
+      if (dist >= MIN_POINT_DISTANCE && pathPoints.length < 50) {
+        pathPoints.push({ x: tile.x, y: tile.y });
+        drawingPathPointsRef.current = [...pathPoints];
+      }
+    };
+
+    const handlePointerUp = () => {
+      if (!isDrawing) return;
+      isDrawing = false;
+
+      if (pathPoints.length >= 2) {
+        drawPathRef.current({
+          roomId,
+          points: [...pathPoints],
+        });
+
+        if (isAudioReady()) {
+          playPingSound("go");
+        }
+      }
+
+      pathPoints.length = 0;
+      drawingPathPointsRef.current = [];
+    };
+
+    canvas.addEventListener("pointerdown", handlePointerDown);
+    canvas.addEventListener("pointermove", handlePointerMove);
+    canvas.addEventListener("pointerup", handlePointerUp);
+    canvas.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      canvas.removeEventListener("pointerdown", handlePointerDown);
+      canvas.removeEventListener("pointermove", handlePointerMove);
+      canvas.removeEventListener("pointerup", handlePointerUp);
+      canvas.removeEventListener("pointercancel", handlePointerUp);
+    };
   }, [role, roomId]);
 
   // Game loop
@@ -687,6 +813,7 @@ export default function GameCanvas({
             lastKnownY: g.lastKnownY,
             stateTimer: g.stateTimer,
           }));
+          localDoorsRef.current = state.doors.map((d) => ({ ...d }));
           guardsInitializedRef.current = true;
         }
 
@@ -729,10 +856,10 @@ export default function GameCanvas({
           let newY = prevY;
 
           const tryX = newX + dx * speed * dt;
-          if (canMoveTo(tryX, newY, map.tiles)) newX = tryX;
+          if (canMoveTo(tryX, newY, map.tiles, localDoorsRef.current)) newX = tryX;
 
           const tryY = newY + dy * speed * dt;
-          if (canMoveTo(newX, tryY, map.tiles)) newY = tryY;
+          if (canMoveTo(newX, tryY, map.tiles, localDoorsRef.current)) newY = tryY;
 
           gsm.setLocalRunnerPosition(newX, newY, crouching);
           setHudCrouchingRef.current(crouching);
@@ -787,7 +914,8 @@ export default function GameCanvas({
               dt,
               map.tiles,
               now,
-              wps
+              wps,
+              localDoorsRef.current
             );
             localGuardsRef.current[i] = {
               ...guard,
@@ -836,7 +964,7 @@ export default function GameCanvas({
             if (
               (oldState === "patrol" || oldState === "returning") &&
               newState === "suspicious" &&
-              !canGuardSeeRunner(guard, runnerForGuard, map.tiles)
+              !canGuardSeeRunner(guard, runnerForGuard, map.tiles, localDoorsRef.current)
             ) {
               recorder.record("noise_alert", {
                 guardId: guard.id,
@@ -893,6 +1021,7 @@ export default function GameCanvas({
                 lastKnownY: g.lastKnownY,
                 stateTimer: g.stateTimer,
               })),
+              doors: localDoorsRef.current,
             });
           }
         }
@@ -914,7 +1043,8 @@ export default function GameCanvas({
             const sees = canCameraSeeRunner(
               { x: cam.x, y: cam.y, angle: currentAngle },
               runnerForCamera,
-              map.tiles
+              map.tiles,
+              localDoorsRef.current
             );
 
             if (sees) {
@@ -973,8 +1103,20 @@ export default function GameCanvas({
             map.tiles
           );
           if (interaction) {
-            if (isAudioReady() && interaction === "exit") playExitUnlock();
-            interactRunnerRef.current({ roomId, sessionId, action: interaction });
+            if (interaction.action === "toggleDoor") {
+              const doorIdx = localDoorsRef.current.findIndex(
+                (d) => d.x === interaction.doorX && d.y === interaction.doorY
+              );
+              if (doorIdx !== -1) {
+                const wasOpen = localDoorsRef.current[doorIdx].open;
+                localDoorsRef.current[doorIdx] = { ...localDoorsRef.current[doorIdx], open: !wasOpen };
+                if (isAudioReady()) { if (wasOpen) playDoorClose(); else playDoorOpen(); }
+              }
+              toggleDoorRef.current({ roomId, doorX: interaction.doorX!, doorY: interaction.doorY! });
+            } else {
+              if (isAudioReady() && interaction.action === "exit") playExitUnlock();
+              interactRunnerRef.current({ roomId, sessionId, action: interaction.action });
+            }
           }
         }
 
@@ -1001,7 +1143,7 @@ export default function GameCanvas({
       if (role === "runner") {
         // ---- Runner rendering path ----
         renderer.clear();
-        renderer.drawTileMap(map.tiles, timeRef.current);
+        renderer.drawTileMap(map.tiles, timeRef.current, localDoorsRef.current.length > 0 ? localDoorsRef.current : state?.doors);
 
         if (!state) return;
 
@@ -1092,6 +1234,11 @@ export default function GameCanvas({
           ctx.restore();
         }
 
+        // Whisper-drawn paths (rendered BELOW fog so only visible in Runner's radius)
+        if (state.paths.length > 0) {
+          renderPathForRunner(ctx, camera, state.paths, state.phase);
+        }
+
         // Fog of war
         const screen = camera.worldToScreen(
           runnerX * TILE_SIZE + TILE_SIZE / 2,
@@ -1124,8 +1271,18 @@ export default function GameCanvas({
         ctx.translate(offsetX, offsetY);
         ctx.scale(scale, scale);
 
-        renderBlueprintMap(ctx, map.tiles);
+        renderBlueprintMap(ctx, map.tiles, state.doors);
         renderWhisperEntities(ctx, state, timeRef.current, guardWaypointsRef.current);
+
+        // Render synced paths
+        if (state.paths.length > 0) {
+          renderPaths(ctx, state.paths, state.phase, timeRef.current);
+        }
+
+        // Render path preview while drawing
+        if (drawingPathPointsRef.current.length >= 2) {
+          renderPathPreview(ctx, drawingPathPointsRef.current, timeRef.current);
+        }
 
         ctx.restore();
       }
@@ -1148,6 +1305,15 @@ export default function GameCanvas({
       stopAmbientLoop();
     };
   }, [roomId, role, sessionId]);
+
+  const [drawModeActive, setDrawModeActive] = useState(false);
+  const toggleDrawMode = useCallback(() => {
+    setDrawModeActive((prev) => {
+      const next = !prev;
+      drawModeRef.current = next;
+      return next;
+    });
+  }, []);
 
   const handleStartHeist = useCallback(() => {
     startHeistPhase({ roomId });
@@ -1186,6 +1352,8 @@ export default function GameCanvas({
           touchInput={touchInput}
           role={role}
           phase={phase}
+          drawModeActive={drawModeActive}
+          onToggleDrawMode={toggleDrawMode}
         />
       )}
 

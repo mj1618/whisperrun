@@ -39,7 +39,8 @@ const BP_TILE_COLORS: Record<TileType, string> = {
  */
 export function renderBlueprintMap(
   ctx: CanvasRenderingContext2D,
-  map: TileType[][]
+  map: TileType[][],
+  doors?: Array<{ x: number; y: number; open: boolean }>
 ) {
   const rows = map.length;
   const cols = map[0]?.length ?? 0;
@@ -66,13 +67,30 @@ export function renderBlueprintMap(
         ctx.strokeRect(x - 0.5, y - 0.5, TILE_SIZE + 1, TILE_SIZE + 1);
       }
 
-      // Door — dashed outline
+      // Door — render based on open/closed state
       if (tile === TileType.Door) {
+        const doorState = doors?.find((d) => d.x === col && d.y === row);
+        const isOpen = doorState?.open ?? false;
         ctx.save();
-        ctx.setLineDash([4, 3]);
-        ctx.strokeStyle = BP_DOOR;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        if (isOpen) {
+          // Open door: thin dashed line, floor-like background
+          ctx.fillStyle = BP_FLOOR;
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+          ctx.setLineDash([2, 4]);
+          ctx.strokeStyle = "rgba(42, 90, 143, 0.4)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + 4, y + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+        } else {
+          // Closed door: solid outline, clearly blocked
+          ctx.strokeStyle = "#4a8abf";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+          // Cross-hatch to show it's solid/blocking
+          ctx.beginPath();
+          ctx.moveTo(x + 4, y + TILE_SIZE / 2);
+          ctx.lineTo(x + TILE_SIZE - 4, y + TILE_SIZE / 2);
+          ctx.stroke();
+        }
         ctx.restore();
       }
 
@@ -376,6 +394,133 @@ export function renderWhisperEntities(
     ctx.fill();
     ctx.restore();
   }
+}
+
+const PATH_DURATION_MS = 15000;
+const PATH_COLOR = "#00E5FF";
+
+export function renderPaths(
+  ctx: CanvasRenderingContext2D,
+  paths: Array<{ points: Array<{ x: number; y: number }>; createdAt: number }>,
+  phase: string,
+  time: number
+) {
+  const now = Date.now();
+
+  for (const path of paths) {
+    if (path.points.length < 2) continue;
+
+    let alpha = 1;
+    if (phase !== "planning") {
+      const elapsed = now - path.createdAt;
+      if (elapsed > PATH_DURATION_MS) continue;
+      alpha = 1 - elapsed / PATH_DURATION_MS;
+    }
+
+    ctx.save();
+
+    // Glow effect (wider, semi-transparent stroke underneath)
+    ctx.strokeStyle = PATH_COLOR;
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.beginPath();
+    for (let i = 0; i < path.points.length; i++) {
+      const px = path.points[i].x * TILE_SIZE + TILE_SIZE / 2;
+      const py = path.points[i].y * TILE_SIZE + TILE_SIZE / 2;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Main stroke (bright, thinner, dashed)
+    ctx.globalAlpha = alpha * 0.8;
+    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = PATH_COLOR;
+    ctx.beginPath();
+    for (let i = 0; i < path.points.length; i++) {
+      const px = path.points[i].x * TILE_SIZE + TILE_SIZE / 2;
+      const py = path.points[i].y * TILE_SIZE + TILE_SIZE / 2;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Animated marching ants effect
+    ctx.lineDashOffset = -time * 30;
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 12]);
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.beginPath();
+    for (let i = 0; i < path.points.length; i++) {
+      const px = path.points[i].x * TILE_SIZE + TILE_SIZE / 2;
+      const py = path.points[i].y * TILE_SIZE + TILE_SIZE / 2;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Arrow head at the end of the path
+    if (path.points.length >= 2) {
+      const last = path.points[path.points.length - 1];
+      const prev = path.points[path.points.length - 2];
+      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+      const tipX = last.x * TILE_SIZE + TILE_SIZE / 2;
+      const tipY = last.y * TILE_SIZE + TILE_SIZE / 2;
+      const arrowSize = 8;
+
+      ctx.setLineDash([]);
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = PATH_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(
+        tipX + Math.cos(angle) * arrowSize,
+        tipY + Math.sin(angle) * arrowSize
+      );
+      ctx.lineTo(
+        tipX + Math.cos(angle + 2.5) * arrowSize,
+        tipY + Math.sin(angle + 2.5) * arrowSize
+      );
+      ctx.lineTo(
+        tipX + Math.cos(angle - 2.5) * arrowSize,
+        tipY + Math.sin(angle - 2.5) * arrowSize
+      );
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+export function renderPathPreview(
+  ctx: CanvasRenderingContext2D,
+  points: Array<{ x: number; y: number }>,
+  time: number
+) {
+  if (points.length < 2) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = PATH_COLOR;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([6, 4]);
+  ctx.lineDashOffset = -time * 20;
+
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const px = points[i].x * TILE_SIZE + TILE_SIZE / 2;
+    const py = points[i].y * TILE_SIZE + TILE_SIZE / 2;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawDiamond(

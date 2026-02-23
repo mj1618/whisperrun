@@ -144,6 +144,31 @@ export const selectRole = mutation({
   },
 });
 
+export const setDifficulty = mutation({
+  args: {
+    roomCode: v.string(),
+    sessionId: v.string(),
+    difficulty: v.union(v.literal("casual"), v.literal("standard"), v.literal("hard")),
+  },
+  handler: async (ctx, args) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_roomCode", (q) => q.eq("roomCode", args.roomCode))
+      .first();
+    if (!room) throw new Error("Room not found");
+    if (room.status !== "waiting") throw new Error("Game already started");
+    const isPlayer = room.players.some((p) => p.sessionId === args.sessionId);
+    if (!isPlayer) throw new Error("You are not in this room");
+
+    // Unready all players when difficulty changes
+    const updatedPlayers = room.players.map((p) => ({ ...p, ready: false }));
+    await ctx.db.patch(room._id, {
+      difficulty: args.difficulty,
+      players: updatedPlayers,
+    });
+  },
+});
+
 export const toggleReady = mutation({
   args: { roomCode: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
@@ -329,6 +354,10 @@ export const startGame = mutation({
       y: v.number(),
       baseAngle: v.number(),
     }))),
+    doors: v.optional(v.array(v.object({
+      x: v.number(),
+      y: v.number(),
+    }))),
   },
   handler: async (ctx, args) => {
     const room = await ctx.db
@@ -370,9 +399,10 @@ export const startGame = mutation({
     const exitX = args.exitX ?? 6;
     const exitY = args.exitY ?? 14;
     const cameraData = args.cameras ?? [];
+    const doorData = (args.doors ?? []).map((d) => ({ x: d.x, y: d.y, open: false }));
 
-    // Basic bounds validation — map is ~46x35 tiles max
-    const MAX_COORD = 50;
+    // Basic bounds validation — map is up to ~57x35 tiles (hard mode 5x3 grid)
+    const MAX_COORD = 60;
     const allPositions = [
       runnerPos,
       { x: exitX, y: exitY },
@@ -389,6 +419,7 @@ export const startGame = mutation({
     // Create initial game state
     await ctx.db.insert("gameState", {
       roomId: room._id,
+      difficulty: room.difficulty ?? "standard",
       runner: { x: runnerPos.x, y: runnerPos.y, crouching: false, hiding: false, hasItem: false },
       guards: guardData.map((g) => ({
         id: g.id,
@@ -406,9 +437,11 @@ export const startGame = mutation({
         name: i.name,
       })),
       cameras: cameraData,
+      doors: doorData,
       exitX,
       exitY,
       pings: [],
+      paths: [],
       phase: "planning",
       startTime: Date.now(),
     });

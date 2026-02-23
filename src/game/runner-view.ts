@@ -90,6 +90,93 @@ export function renderFogOfWar(
   }
 }
 
+const PATH_DURATION_MS_RUNNER = 15000;
+
+export function renderPathForRunner(
+  ctx: CanvasRenderingContext2D,
+  camera: Camera,
+  paths: Array<{ points: Array<{ x: number; y: number }>; createdAt: number }>,
+  phase: string
+) {
+  const now = Date.now();
+
+  for (const path of paths) {
+    if (path.points.length < 2) continue;
+
+    let alpha = 1;
+    if (phase !== "planning") {
+      const elapsed = now - path.createdAt;
+      if (elapsed > PATH_DURATION_MS_RUNNER) continue;
+      alpha = 1 - elapsed / PATH_DURATION_MS_RUNNER;
+    }
+
+    const screenPoints = path.points.map((p) =>
+      camera.worldToScreen(
+        p.x * TILE_SIZE + TILE_SIZE / 2,
+        p.y * TILE_SIZE + TILE_SIZE / 2
+      )
+    );
+
+    // Glow layer
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.25;
+    ctx.strokeStyle = "#00E5FF";
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < screenPoints.length; i++) {
+      if (i === 0) ctx.moveTo(screenPoints[i].x, screenPoints[i].y);
+      else ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Main path (dashed, bright)
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = "#00E5FF";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([6, 8]);
+    ctx.beginPath();
+    for (let i = 0; i < screenPoints.length; i++) {
+      if (i === 0) ctx.moveTo(screenPoints[i].x, screenPoints[i].y);
+      else ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Directional arrow at endpoint
+    if (screenPoints.length >= 2) {
+      const last = screenPoints[screenPoints.length - 1];
+      const prev = screenPoints[screenPoints.length - 2];
+      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = "#00E5FF";
+      ctx.beginPath();
+      ctx.moveTo(
+        last.x + Math.cos(angle) * 10,
+        last.y + Math.sin(angle) * 10
+      );
+      ctx.lineTo(
+        last.x + Math.cos(angle + 2.5) * 10,
+        last.y + Math.sin(angle + 2.5) * 10
+      );
+      ctx.lineTo(
+        last.x + Math.cos(angle - 2.5) * 10,
+        last.y + Math.sin(angle - 2.5) * 10
+      );
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
 /**
  * Render pings on the Runner's screen. Drawn ABOVE the fog of war so
  * they're always visible. Off-screen pings show as directional chevrons

@@ -7,14 +7,40 @@ interface TouchControlsProps {
   touchInput: TouchInputManager;
   role: "runner" | "whisper";
   phase: string;
+  drawModeActive?: boolean;
+  onToggleDrawMode?: () => void;
 }
 
 const JOYSTICK_OUTER = 100;
 const JOYSTICK_KNOB = 40;
 const MAX_RADIUS = 50;
 
-export function TouchControls({ touchInput, role, phase }: TouchControlsProps) {
-  // Only show controls for runner during heist
+export function TouchControls({ touchInput, role, phase, drawModeActive, onToggleDrawMode }: TouchControlsProps) {
+  // Whisper draw-mode toggle (mobile only, during planning or heist)
+  if (role === "whisper" && (phase === "planning" || phase === "heist")) {
+    return (
+      <div className="fixed inset-0 z-20 pointer-events-none">
+        <div className="absolute right-4 bottom-8 pointer-events-auto">
+          <button
+            className={`w-16 h-16 rounded-full border-2 text-xs font-bold
+              flex items-center justify-center select-none
+              ${drawModeActive
+                ? "bg-[#00E5FF]/30 border-[#00E5FF] text-[#00E5FF]"
+                : "bg-[#2D1B0E]/70 border-[#00E5FF]/50 text-[#00E5FF]/70"
+              }`}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              onToggleDrawMode?.();
+            }}
+          >
+            DRAW
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Only show runner controls during heist
   if (role !== "runner") return null;
   if (phase !== "heist") return null;
 

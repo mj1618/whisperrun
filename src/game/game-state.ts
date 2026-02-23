@@ -30,7 +30,9 @@ export interface LocalGameState {
     y: number;
     baseAngle: number;
   }>;
+  doors: Array<{ x: number; y: number; open: boolean }>;
   pings: Array<{ x: number; y: number; type: "danger" | "go" | "item"; createdAt: number }>;
+  paths: Array<{ points: Array<{ x: number; y: number }>; createdAt: number }>;
   exitX: number;
   exitY: number;
   phase: "planning" | "heist" | "escaped" | "caught" | "timeout" | "disconnected";

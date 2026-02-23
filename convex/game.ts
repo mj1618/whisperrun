@@ -168,6 +168,83 @@ export const cleanupPings = mutation({
   },
 });
 
+export const drawPath = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    points: v.array(v.object({ x: v.number(), y: v.number() })),
+  },
+  handler: async (ctx, args) => {
+    const gameState = await ctx.db
+      .query("gameState")
+      .withIndex("by_roomId", (q) => q.eq("roomId", args.roomId))
+      .first();
+    if (!gameState) throw new Error("Game not found");
+    if (gameState.phase !== "planning" && gameState.phase !== "heist") return;
+
+    const points = args.points.slice(0, 50);
+    if (points.length < 2) return;
+
+    await ctx.db.patch(gameState._id, {
+      paths: [{ points, createdAt: Date.now() }],
+    });
+  },
+});
+
+export const cleanupPaths = mutation({
+  args: { roomId: v.id("rooms") },
+  handler: async (ctx, args) => {
+    const gameState = await ctx.db
+      .query("gameState")
+      .withIndex("by_roomId", (q) => q.eq("roomId", args.roomId))
+      .first();
+    if (!gameState) return;
+
+    if (gameState.phase === "planning") return;
+
+    const now = Date.now();
+    const PATH_DURATION = 15000;
+    const activePaths = gameState.paths.filter((p) => now - p.createdAt < PATH_DURATION);
+
+    if (activePaths.length !== gameState.paths.length) {
+      await ctx.db.patch(gameState._id, { paths: activePaths });
+    }
+  },
+});
+
+export const toggleDoor = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    doorX: v.number(),
+    doorY: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const gameState = await ctx.db
+      .query("gameState")
+      .withIndex("by_roomId", (q) => q.eq("roomId", args.roomId))
+      .first();
+    if (!gameState) throw new Error("Game not found");
+    if (gameState.phase !== "heist") return;
+
+    const doorIndex = gameState.doors.findIndex(
+      (d) => d.x === args.doorX && d.y === args.doorY
+    );
+    if (doorIndex === -1) return;
+
+    const dist = Math.hypot(
+      args.doorX + 0.5 - gameState.runner.x,
+      args.doorY + 0.5 - gameState.runner.y
+    );
+    if (dist > 1.5) return;
+
+    const updatedDoors = [...gameState.doors];
+    updatedDoors[doorIndex] = {
+      ...updatedDoors[doorIndex],
+      open: !updatedDoors[doorIndex].open,
+    };
+    await ctx.db.patch(gameState._id, { doors: updatedDoors });
+  },
+});
+
 export const tickGuards = mutation({
   args: {
     roomId: v.id("rooms"),
@@ -189,6 +266,13 @@ export const tickGuards = mutation({
         stateTimer: v.optional(v.number()),
       })
     ),
+    doors: v.optional(v.array(
+      v.object({
+        x: v.number(),
+        y: v.number(),
+        open: v.boolean(),
+      })
+    )),
   },
   handler: async (ctx, args) => {
     const gameState = await ctx.db
@@ -199,8 +283,12 @@ export const tickGuards = mutation({
     if (!gameState) throw new Error("Game not found");
     if (gameState.phase !== "heist") return;
 
-    // Update guard positions
-    await ctx.db.patch(gameState._id, { guards: args.guards });
+    // Update guard positions and optionally door states (guards open doors)
+    const patch: Record<string, unknown> = { guards: args.guards };
+    if (args.doors) {
+      patch.doors = args.doors;
+    }
+    await ctx.db.patch(gameState._id, patch);
 
     // Server-authoritative catch check
     const runner = gameState.runner;

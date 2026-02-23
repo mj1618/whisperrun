@@ -55,8 +55,13 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Integration Review — all M7/M8 modules integrated, build passes, lint clean, end-to-end wiring verified
 - **Completed:** Sound Effects & Ambient Audio — procedural Web Audio API sound engine, footsteps, guard alerts, item pickup jingle, ambient hum, countdown ticks, game over fanfares, mute button
 - **Completed:** Controls Tutorial & Onboarding Overlay — role-specific controls during planning phase, in-game help popup (H/? toggle)
-- **In Progress:** Functional Security Cameras — sweeping vision cones, camera detection alerting nearest guard, Whisper/Runner cone rendering
-- **Queued:** Noise-Based Guard Detection — running creates footstep noise that alerts nearby guards, crouching is silent
-- **Queued:** Player Disconnect Handling — heartbeat-based presence detection, grace period reconnection, clean game ending on disconnect
+- **Completed:** Functional Security Cameras — sweeping vision cones, camera detection alerting nearest guard, Whisper/Runner cone rendering
+- **Completed:** Noise-Based Guard Detection — running creates footstep noise that alerts nearby guards, crouching is silent, 4s cooldown, noise wave visual indicator
+- **Completed:** Player Disconnect Handling — heartbeat-based presence detection (3s interval, 8s timeout), 5s grace period for reconnection, clean game ending on disconnect with "Partner Disconnected" results screen
+- **Completed:** Mobile Touch Controls — floating virtual joystick for Runner, touch buttons for crouch/interact, 44px touch targets, viewport zoom prevention, touch-none CSS
+- **Completed:** Interactive Doors — doors start closed and block movement/vision, Runner toggles with interact key (makes noise), guards open doors on patrol, closed doors block guard/camera LOS
+- **Completed:** Whisper Path Drawing — Shift+drag to draw routes on blueprint, Runner sees glowing trail through fog of war, 15s fadeout during heist, mobile draw-mode toggle
+- **Queued:** Difficulty Levels — Casual/Standard/Hard selector in lobby, parameterizes map size, guard count/speed/vision, camera count, heist timer, planning duration
+- **Queued:** Daily Challenge Leaderboard — Convex leaderboard table, auto-submit scores after daily challenge escapes, team name generator, leaderboard display on landing page and results screen
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

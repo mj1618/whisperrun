@@ -147,6 +147,13 @@ function ControlsPopup({
               <span className="text-[#FFD700]">1/2/3</span>
               <span className="text-[#8BB8E8]/70">Ping type</span>
             </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-[#00E5FF]">Shift+Drag</span>
+              <span className="text-[#8BB8E8]/70">Draw route</span>
+            </div>
+            <div className="text-[#8BB8E8]/40 text-[10px] mt-1">
+              Routes fade after 15s during heist
+            </div>
           </div>
         )}
       </div>
