@@ -3,24 +3,25 @@
 import { useEffect, useState } from "react";
 import { PING_TYPES } from "@/game/ping-system";
 
+const HEIST_DURATION = 180_000; // 3 minutes
+
 interface HUDProps {
   role: "runner" | "whisper";
   phase: string;
   startTime: number;
+  heistStartTime?: number;
   hasItem: boolean;
   itemName: string;
   crouching: boolean;
-  // Whisper-specific
   selectedPingType?: "go" | "danger" | "item";
   activePingCount?: number;
   runnerState?: { crouching: boolean; hiding: boolean; hasItem: boolean };
   onSelectPingType?: (type: "go" | "danger" | "item") => void;
-  // Guard alert state for Runner HUD
   guardAlertState?: string;
 }
 
-function formatTime(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+function formatCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -29,7 +30,7 @@ function formatTime(ms: number): string {
 export default function HUD({
   role,
   phase,
-  startTime,
+  heistStartTime,
   hasItem,
   itemName,
   crouching,
@@ -41,24 +42,39 @@ export default function HUD({
 }: HUDProps) {
   const [now, setNow] = useState(() => Date.now());
 
-  const activePhases = ["planning", "heist", "escaped", "caught", "timeout"];
-  const isActivePhase = activePhases.includes(phase);
-
   useEffect(() => {
-    if (!isActivePhase) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
+    if (phase !== "heist" && phase !== "planning") return;
+    const id = setInterval(() => setNow(Date.now()), 200);
     return () => clearInterval(id);
-  }, [isActivePhase]);
+  }, [phase]);
 
-  // Only show during active game phases
-  if (!isActivePhase) return null;
+  // Only show HUD during heist (planning uses PlanningOverlay)
+  if (phase !== "heist") {
+    // Whisper still sees their HUD during planning
+    if (role === "whisper" && phase === "planning") {
+      return <WhisperHUD
+        phase={phase}
+        heistRemaining={HEIST_DURATION}
+        selectedPingType={selectedPingType}
+        activePingCount={activePingCount}
+        runnerState={runnerState}
+        itemName={itemName}
+        onSelectPingType={onSelectPingType}
+      />;
+    }
+    return null;
+  }
 
-  const elapsed = now - startTime;
+  // Heist phase — compute remaining time
+  const heistElapsed = heistStartTime ? now - heistStartTime : 0;
+  const heistRemaining = Math.max(0, HEIST_DURATION - heistElapsed);
+  const isUrgent = heistRemaining <= 30_000;
+  const isCritical = heistRemaining <= 10_000;
 
   if (role === "whisper") {
     return <WhisperHUD
       phase={phase}
-      elapsed={elapsed}
+      heistRemaining={heistRemaining}
       selectedPingType={selectedPingType}
       activePingCount={activePingCount}
       runnerState={runnerState}
@@ -67,15 +83,19 @@ export default function HUD({
     />;
   }
 
-  // Runner HUD — only show during heist/escaped
-  if (phase !== "heist" && phase !== "escaped") return null;
-
+  // Runner HUD
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      {/* Timer — top center */}
+      {/* Timer — top center (countdown) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2">
-        <div className="bg-black/50 text-[#E8D5B7] px-4 py-2 rounded-lg font-mono text-xl">
-          {formatTime(elapsed)}
+        <div className={`bg-black/50 px-4 py-2 rounded-lg font-mono transition-all ${
+          isCritical
+            ? "text-red-400 text-2xl animate-pulse scale-110"
+            : isUrgent
+            ? "text-red-400 text-xl animate-pulse"
+            : "text-[#E8D5B7] text-xl"
+        }`}>
+          {formatCountdown(heistRemaining)}
         </div>
       </div>
 
@@ -95,15 +115,15 @@ export default function HUD({
         </div>
       </div>
 
-      {/* Guard alert indicator — top center below timer */}
-      {guardAlertState === "alert" && phase === "heist" && (
+      {/* Guard alert indicator */}
+      {guardAlertState === "alert" && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2">
           <div className="bg-red-900/80 text-red-300 px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wider animate-pulse">
             ! ALERT !
           </div>
         </div>
       )}
-      {guardAlertState === "suspicious" && phase === "heist" && (
+      {guardAlertState === "suspicious" && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2">
           <div className="bg-yellow-900/80 text-yellow-300 px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wider">
             ? Suspicious
@@ -123,7 +143,7 @@ export default function HUD({
       {/* Phase indicator — top left */}
       <div className="absolute top-4 left-4">
         <div className="bg-black/30 text-[#E8D5B7]/60 px-3 py-1 rounded text-xs uppercase tracking-wider">
-          {phase}
+          HEIST
         </div>
       </div>
     </div>
@@ -132,7 +152,7 @@ export default function HUD({
 
 function WhisperHUD({
   phase,
-  elapsed,
+  heistRemaining,
   selectedPingType,
   activePingCount,
   runnerState,
@@ -140,19 +160,28 @@ function WhisperHUD({
   onSelectPingType,
 }: {
   phase: string;
-  elapsed: number;
+  heistRemaining: number;
   selectedPingType: string;
   activePingCount: number;
   runnerState?: { crouching: boolean; hiding: boolean; hasItem: boolean };
   itemName: string;
   onSelectPingType?: (type: "go" | "danger" | "item") => void;
 }) {
+  const isUrgent = heistRemaining <= 30_000;
+  const isCritical = heistRemaining <= 10_000;
+
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      {/* Timer — top center */}
+      {/* Timer — top center (countdown) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2">
-        <div className="bg-[#0a0e1a]/80 text-[#8BB8E8] px-4 py-2 rounded-lg font-mono text-xl border border-[#1e3a5f]">
-          {formatTime(elapsed)}
+        <div className={`bg-[#0a0e1a]/80 px-4 py-2 rounded-lg font-mono border transition-all ${
+          phase === "heist" && isCritical
+            ? "text-red-400 border-red-500 text-2xl animate-pulse scale-110"
+            : phase === "heist" && isUrgent
+            ? "text-red-400 border-red-500 text-xl animate-pulse"
+            : "text-[#8BB8E8] border-[#1e3a5f] text-xl"
+        }`}>
+          {phase === "heist" ? formatCountdown(heistRemaining) : "3:00"}
         </div>
       </div>
 

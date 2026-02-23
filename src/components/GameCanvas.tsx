@@ -34,6 +34,9 @@ const CROUCH_VIS_RADIUS = 4 * TILE_SIZE;
 // Runner hitbox half-width in tiles
 const HITBOX_HALF = 0.3;
 
+// Planning phase duration in ms
+const PLANNING_DURATION = 30_000;
+
 function canMoveTo(x: number, y: number): boolean {
   const corners = [
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y - HITBOX_HALF) },
@@ -87,6 +90,51 @@ function getInteraction(
   }
 
   return null;
+}
+
+function PlanningOverlay({
+  startTime,
+  role,
+  onStartHeist,
+}: {
+  startTime: number;
+  role: "runner" | "whisper";
+  onStartHeist: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const remaining = Math.max(0, PLANNING_DURATION - (now - startTime));
+  const remainingSeconds = Math.ceil(remaining / 1000);
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center z-20">
+      <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
+        <h2 className="text-2xl font-bold text-[#E8D5B7]">
+          Planning Phase
+        </h2>
+        <div className="text-4xl font-mono font-bold text-[#FFD700]">
+          0:{remainingSeconds.toString().padStart(2, "0")}
+        </div>
+        <p className="text-[#E8D5B7]/70 text-sm">
+          {role === "whisper"
+            ? "Study the map and ping locations for the Runner!"
+            : "Get ready to sneak in!"}
+        </p>
+        <button
+          onClick={onStartHeist}
+          className="px-8 py-3 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
+                     hover:bg-[#FFC107] transition-colors text-lg cursor-pointer"
+        >
+          Start Heist!
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function GameCanvas({
@@ -266,9 +314,8 @@ export default function GameCanvas({
 
       // Planning phase auto-transition: Runner client auto-starts heist when countdown ends
       if (state.phase === "planning" && role === "runner" && !planningAutoStarted) {
-        const planningDuration = 30_000;
         const elapsed = Date.now() - state.startTime;
-        if (elapsed >= planningDuration) {
+        if (elapsed >= PLANNING_DURATION) {
           planningAutoStarted = true;
           startHeistPhaseRef.current({ roomId });
         }
@@ -300,7 +347,7 @@ export default function GameCanvas({
             x: g.x,
             y: g.y,
             angle: g.angle,
-            state: g.state as GuardData["state"],
+            state: g.state,
             targetWaypoint: g.targetWaypoint,
             lastKnownX: g.lastKnownX,
             lastKnownY: g.lastKnownY,
@@ -450,7 +497,7 @@ export default function GameCanvas({
           ? localGuardsRef.current
           : state.guards;
         for (const guard of guardsToRender) {
-          renderer.drawGuard(guard.x, guard.y, guard.angle, guard.state as "patrol" | "suspicious" | "alert" | "returning");
+          renderer.drawGuard(guard.x, guard.y, guard.angle, guard.state);
         }
 
         const runnerX = gsm.localRunnerX;
@@ -531,7 +578,7 @@ export default function GameCanvas({
       <HUD
         role={role}
         phase={phase}
-        startTime={gameState?.heistStartTime ?? gameState?.startTime ?? 0}
+        startTime={gameState?.startTime ?? 0}
         hasItem={gameState?.runner.hasItem ?? false}
         itemName={gameState?.items[0]?.name ?? "Golden Rubber Duck"}
         crouching={hudCrouching}
@@ -542,27 +589,13 @@ export default function GameCanvas({
         guardAlertState={guardAlertState}
       />
 
-      {/* Planning phase overlay */}
+      {/* Planning phase overlay with countdown */}
       {phase === "planning" && (
-        <div className="absolute inset-0 flex items-center justify-center z-20">
-          <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
-            <h2 className="text-2xl font-bold text-[#E8D5B7]">
-              Planning Phase
-            </h2>
-            <p className="text-[#E8D5B7]/70 text-sm">
-              {role === "whisper"
-                ? "Study the map and ping locations for the Runner!"
-                : "Get ready to sneak in!"}
-            </p>
-            <button
-              onClick={handleStartHeist}
-              className="px-8 py-3 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
-                         hover:bg-[#FFC107] transition-colors text-lg cursor-pointer"
-            >
-              Start Heist!
-            </button>
-          </div>
-        </div>
+        <PlanningOverlay
+          startTime={gameState?.startTime ?? 0}
+          role={role}
+          onStartHeist={handleStartHeist}
+        />
       )}
 
       {/* Escaped overlay */}
