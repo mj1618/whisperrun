@@ -11,7 +11,7 @@ function generateRoomCode(): string {
 }
 
 export const createRoom = mutation({
-  args: { sessionId: v.string() },
+  args: { sessionId: v.string(), daily: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     // Generate a unique room code (retry on collision)
     let roomCode = generateRoomCode();
@@ -32,11 +32,25 @@ export const createRoom = mutation({
       throw new Error("Failed to generate unique room code, please try again");
     }
 
+    let mapSeed: number;
+    if (args.daily) {
+      // Deterministic daily seed: djb2 hash of today's date
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      let hash = 5381;
+      for (let i = 0; i < dateStr.length; i++) {
+        hash = ((hash << 5) + hash + dateStr.charCodeAt(i)) | 0;
+      }
+      mapSeed = Math.abs(hash);
+    } else {
+      mapSeed = Math.floor(Math.random() * 1_000_000);
+    }
+
     const roomId = await ctx.db.insert("rooms", {
       roomCode,
       players: [{ sessionId: args.sessionId, role: null, ready: false }],
       status: "waiting",
-      mapSeed: Math.floor(Math.random() * 1000000),
+      mapSeed,
       createdAt: Date.now(),
     });
     return { roomId, roomCode };
@@ -174,6 +188,7 @@ export const resetRoom = mutation({
     await ctx.db.patch(room._id, {
       status: "waiting",
       players: resetPlayers,
+      mapSeed: Math.floor(Math.random() * 1000000),
     });
 
     // Delete old game state
@@ -188,7 +203,24 @@ export const resetRoom = mutation({
 });
 
 export const startGame = mutation({
-  args: { roomCode: v.string(), sessionId: v.string() },
+  args: {
+    roomCode: v.string(),
+    sessionId: v.string(),
+    runnerSpawn: v.optional(v.object({ x: v.number(), y: v.number() })),
+    guards: v.optional(v.array(v.object({
+      id: v.string(),
+      x: v.number(),
+      y: v.number(),
+    }))),
+    items: v.optional(v.array(v.object({
+      id: v.string(),
+      x: v.number(),
+      y: v.number(),
+      name: v.string(),
+    }))),
+    exitX: v.optional(v.number()),
+    exitY: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const room = await ctx.db
       .query("rooms")
@@ -212,28 +244,58 @@ export const startGame = mutation({
       throw new Error("All players must be ready");
     }
 
+    // Guard against duplicate game state (race between both players clicking start)
+    const existingGameState = await ctx.db
+      .query("gameState")
+      .withIndex("by_roomId", (q) => q.eq("roomId", room._id))
+      .first();
+    if (existingGameState) return;
+
     // Set room to playing
     await ctx.db.patch(room._id, { status: "playing" });
+
+    // Use client-provided positions (from procedural map generator) or defaults
+    const runnerPos = args.runnerSpawn ?? { x: 1, y: 1 };
+    const guardData = args.guards ?? [{ id: "guard-1", x: 9, y: 12 }];
+    const itemData = args.items ?? [{ id: "item-1", x: 17, y: 7, name: "Golden Rubber Duck" }];
+    const exitX = args.exitX ?? 6;
+    const exitY = args.exitY ?? 14;
+
+    // Basic bounds validation — map is ~46x35 tiles max
+    const MAX_COORD = 50;
+    const allPositions = [
+      runnerPos,
+      { x: exitX, y: exitY },
+      ...guardData.map((g) => ({ x: g.x, y: g.y })),
+      ...itemData.map((i) => ({ x: i.x, y: i.y })),
+    ];
+    for (const pos of allPositions) {
+      if (pos.x < 0 || pos.x > MAX_COORD || pos.y < 0 || pos.y > MAX_COORD) {
+        throw new Error("Invalid entity position");
+      }
+    }
 
     // Create initial game state
     await ctx.db.insert("gameState", {
       roomId: room._id,
-      runner: { x: 1, y: 1, crouching: false, hiding: false, hasItem: false },
-      guards: [
-        {
-          id: "guard-1",
-          x: 9,
-          y: 12,
-          angle: 0,
-          state: "patrol",
-          targetWaypoint: 0,
-        },
-      ],
-      items: [
-        { id: "item-1", x: 17, y: 7, pickedUp: false, name: "Golden Rubber Duck" },
-      ],
-      exitX: 6,
-      exitY: 14,
+      runner: { x: runnerPos.x, y: runnerPos.y, crouching: false, hiding: false, hasItem: false },
+      guards: guardData.map((g) => ({
+        id: g.id,
+        x: g.x,
+        y: g.y,
+        angle: 0,
+        state: "patrol" as const,
+        targetWaypoint: 0,
+      })),
+      items: itemData.map((i) => ({
+        id: i.id,
+        x: i.x,
+        y: i.y,
+        pickedUp: false,
+        name: i.name,
+      })),
+      exitX,
+      exitY,
       pings: [],
       phase: "planning",
       startTime: Date.now(),

@@ -95,6 +95,16 @@ export function renderBlueprintMap(
       }
     }
   }
+
+  // Scanline overlay for monitor feel
+  ctx.save();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.03)";
+  const mapPixelH = rows * TILE_SIZE;
+  const mapPixelW = cols * TILE_SIZE;
+  for (let y = 0; y < mapPixelH; y += 3) {
+    ctx.fillRect(0, y, mapPixelW, 1);
+  }
+  ctx.restore();
 }
 
 /**
@@ -104,9 +114,51 @@ export function renderBlueprintMap(
 export function renderWhisperEntities(
   ctx: CanvasRenderingContext2D,
   gameState: LocalGameState,
-  time: number
+  time: number,
+  guardPatrols?: Record<string, Array<{ x: number; y: number }>>
 ) {
   const { runner, guards, items, pings, exitX, exitY } = gameState;
+
+  // -- Guard patrol routes (drawn underneath entities) --
+  if (guardPatrols) {
+    for (const [, waypoints] of Object.entries(guardPatrols)) {
+      if (waypoints.length < 2) continue;
+
+      // Dashed line connecting waypoints
+      ctx.save();
+      ctx.setLineDash([4, 6]);
+      ctx.strokeStyle = "rgba(255, 100, 100, 0.15)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < waypoints.length; i++) {
+        const wx = waypoints[i].x * TILE_SIZE + TILE_SIZE / 2;
+        const wy = waypoints[i].y * TILE_SIZE + TILE_SIZE / 2;
+        if (i === 0) ctx.moveTo(wx, wy);
+        else ctx.lineTo(wx, wy);
+      }
+      // Close the loop
+      ctx.lineTo(
+        waypoints[0].x * TILE_SIZE + TILE_SIZE / 2,
+        waypoints[0].y * TILE_SIZE + TILE_SIZE / 2
+      );
+      ctx.stroke();
+      ctx.restore();
+
+      // Small dots at each waypoint
+      for (const wp of waypoints) {
+        ctx.fillStyle = "rgba(255, 100, 100, 0.2)";
+        ctx.beginPath();
+        ctx.arc(
+          wp.x * TILE_SIZE + TILE_SIZE / 2,
+          wp.y * TILE_SIZE + TILE_SIZE / 2,
+          3,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+  }
 
   // -- Exit --
   {
@@ -204,11 +256,27 @@ export function renderWhisperEntities(
 
     // State label for alert/suspicious
     if (guard.state === "alert") {
+      // Pulsing glow for alert state
+      const pulse = 0.5 + 0.5 * Math.sin(time * 8);
+      ctx.save();
+      ctx.globalAlpha = pulse * 0.4;
+      ctx.beginPath();
+      ctx.arc(gx, gy, radius + 8, 0, Math.PI * 2);
+      ctx.fillStyle = "#FF0000";
+      ctx.fill();
+      ctx.restore();
+
       ctx.fillStyle = "#FF2222";
-      ctx.font = "bold 8px monospace";
+      ctx.font = "bold 10px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
-      ctx.fillText("!", gx, gy - radius - 4);
+      ctx.fillText("! ALERT", gx, gy - radius - 4);
+    } else if (guard.state === "suspicious") {
+      ctx.fillStyle = "#FFaa33";
+      ctx.font = "bold 9px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("?", gx, gy - radius - 4);
     }
   }
 

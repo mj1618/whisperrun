@@ -38,7 +38,7 @@ const C = TileType.Camera;
  * W.....E............W
  * WWWWWWWWWWWWWWWWWWWW
  */
-export const TEST_MAP: TileType[][] = [
+export const FALLBACK_MAP: TileType[][] = [
   [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W],
   [W, F, F, F, F, F, F, W, F, F, F, W, F, F, F, F, F, F, F, W],
   [W, F, F, F, F, F, F, W, F, F, F, W, F, F, F, F, F, F, F, W],

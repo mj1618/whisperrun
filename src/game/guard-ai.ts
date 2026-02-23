@@ -48,9 +48,9 @@ export interface GuardUpdate {
   caught?: boolean;
 }
 
-// --- Patrol Waypoints ---
+// --- Default Patrol Waypoints (fallback for legacy maps) ---
 
-export const GUARD_WAYPOINTS: Record<string, Array<{ x: number; y: number }>> = {
+export const DEFAULT_GUARD_WAYPOINTS: Record<string, Array<{ x: number; y: number }>> = {
   "guard-1": [
     { x: 3, y: 12 },
     { x: 3, y: 13 },
@@ -179,9 +179,10 @@ export function tickGuard(
   runner: RunnerData,
   dt: number,
   map: TileType[][],
-  now: number
+  now: number,
+  waypoints?: Array<{ x: number; y: number }>
 ): GuardUpdate {
-  const waypoints = GUARD_WAYPOINTS[guard.id] ?? [];
+  const wps = waypoints ?? DEFAULT_GUARD_WAYPOINTS[guard.id] ?? [];
   const canSee = canGuardSeeRunner(guard, runner, map);
 
   switch (guard.state) {
@@ -200,7 +201,7 @@ export function tickGuard(
         };
       }
 
-      if (waypoints.length === 0) {
+      if (wps.length === 0) {
         return {
           x: guard.x,
           y: guard.y,
@@ -210,7 +211,7 @@ export function tickGuard(
         };
       }
 
-      const wp = waypoints[guard.targetWaypoint % waypoints.length];
+      const wp = wps[guard.targetWaypoint % wps.length];
       const distToWp = Math.hypot(wp.x - guard.x, wp.y - guard.y);
 
       if (distToWp < 0.3) {
@@ -218,7 +219,7 @@ export function tickGuard(
         const timer = guard.stateTimer ?? now;
         if (now - timer >= WAYPOINT_PAUSE) {
           // Advance to next waypoint
-          const nextWp = (guard.targetWaypoint + 1) % waypoints.length;
+          const nextWp = (guard.targetWaypoint + 1) % wps.length;
           return {
             x: guard.x,
             y: guard.y,
@@ -399,7 +400,7 @@ export function tickGuard(
       }
 
       // Find nearest waypoint to return to
-      if (waypoints.length === 0) {
+      if (wps.length === 0) {
         return {
           x: guard.x,
           y: guard.y,
@@ -412,20 +413,20 @@ export function tickGuard(
 
       let nearestIdx = 0;
       let nearestDist = Infinity;
-      for (let i = 0; i < waypoints.length; i++) {
-        const d = Math.hypot(waypoints[i].x - guard.x, waypoints[i].y - guard.y);
+      for (let i = 0; i < wps.length; i++) {
+        const d = Math.hypot(wps[i].x - guard.x, wps[i].y - guard.y);
         if (d < nearestDist) {
           nearestDist = d;
           nearestIdx = i;
         }
       }
 
-      const wp = waypoints[nearestIdx];
+      const wp = wps[nearestIdx];
       const distToWp = Math.hypot(wp.x - guard.x, wp.y - guard.y);
 
       if (distToWp < 0.3) {
         // Reached waypoint → resume patrol at next waypoint
-        const nextWp = (nearestIdx + 1) % waypoints.length;
+        const nextWp = (nearestIdx + 1) % wps.length;
         return {
           x: guard.x,
           y: guard.y,

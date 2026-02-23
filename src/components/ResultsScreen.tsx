@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { GameEvent } from "@/game/events";
+import { calculateScore } from "@/game/scoring";
+import { generateHighlights, formatEventTime } from "@/game/highlights";
 
 interface ResultsScreenProps {
   outcome: "escaped" | "caught" | "timeout";
@@ -13,6 +16,7 @@ interface ResultsScreenProps {
   roomCode: string;
   sessionId: string;
   role: "runner" | "whisper";
+  events?: GameEvent[];
 }
 
 function formatDuration(ms: number): string {
@@ -20,13 +24,6 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
-function getStealthRating(outcome: string, durationMs: number): number {
-  if (outcome !== "escaped") return 0;
-  if (durationMs < 60_000) return 3;
-  if (durationMs < 120_000) return 2;
-  return 1;
 }
 
 const OUTCOME_CONFIG = {
@@ -61,13 +58,31 @@ export default function ResultsScreen({
   roomCode,
   sessionId,
   role,
+  events,
 }: ResultsScreenProps) {
   const router = useRouter();
   const resetRoom = useMutation(api.rooms.resetRoom);
   const config = OUTCOME_CONFIG[outcome];
-  // Capture duration once on mount to avoid calling Date.now() during render
-  const [heistDuration] = useState(() => heistStartTime ? Date.now() - heistStartTime : 0);
-  const stars = getStealthRating(outcome, heistDuration);
+  const [heistDuration] = useState(() =>
+    heistStartTime ? Date.now() - heistStartTime : 0
+  );
+
+  const hasEvents = events && events.length > 0;
+
+  const score = useMemo(
+    () =>
+      hasEvents
+        ? calculateScore(outcome, heistDuration, events)
+        : null,
+    [hasEvents, outcome, heistDuration, events]
+  );
+
+  const highlights = useMemo(
+    () => (hasEvents ? generateHighlights(events) : []),
+    [hasEvents, events]
+  );
+
+  const stars = score?.stealthRating ?? 0;
 
   const handlePlayAgain = async () => {
     try {
@@ -82,9 +97,15 @@ export default function ResultsScreen({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" style={{ animation: "fade-in 0.5s ease-out" }}>
-      <div className={`bg-[#2D1B0E] rounded-2xl p-8 max-w-md w-full mx-4 space-y-6 border ${config.borderColor} bg-gradient-to-b ${config.bgAccent}`} style={{ animation: "scale-in 0.3s ease-out" }}>
-        {/* Title */}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 overflow-y-auto py-8"
+      style={{ animation: "fade-in 0.5s ease-out" }}
+    >
+      <div
+        className={`bg-[#2D1B0E] rounded-2xl p-8 max-w-md w-full mx-4 space-y-6 border ${config.borderColor} bg-gradient-to-b ${config.bgAccent}`}
+        style={{ animation: "scale-in 0.3s ease-out" }}
+      >
+        {/* Title + Play Style */}
         <div className="text-center space-y-2">
           <h2
             className="text-4xl font-bold"
@@ -92,13 +113,40 @@ export default function ResultsScreen({
           >
             {config.title}
           </h2>
-          <p className="text-[#E8D5B7]/70 text-sm">
-            {config.subtitle}
-          </p>
+          {score && (
+            <p className="text-[#FFD700] font-bold text-lg">
+              &ldquo;{score.playStyleTitle}&rdquo;
+            </p>
+          )}
+          {!score && (
+            <p className="text-[#E8D5B7]/70 text-sm">{config.subtitle}</p>
+          )}
+          {/* Stealth stars */}
+          {stars > 0 && (
+            <div className="text-[#FFD700] text-2xl tracking-wider">
+              {Array.from({ length: stars }, (_, i) => (
+                <span key={i}>&#9733;</span>
+              ))}
+              {Array.from({ length: 3 - stars }, (_, i) => (
+                <span key={i} className="opacity-20">
+                  &#9733;
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Stats card */}
+        {/* Score & Stats card */}
         <div className="bg-black/30 rounded-xl p-5 space-y-3">
+          {score && (
+            <div className="flex justify-between items-center">
+              <span className="text-[#E8D5B7]/60 text-sm">Score</span>
+              <span className="text-[#FFD700] font-mono font-bold text-lg">
+                {score.total.toLocaleString()}
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-between items-center">
             <span className="text-[#E8D5B7]/60 text-sm">Time</span>
             <span className="text-[#E8D5B7] font-mono font-bold">
@@ -106,39 +154,78 @@ export default function ResultsScreen({
             </span>
           </div>
 
-          {outcome === "escaped" && (
+          {score && score.timeBonus > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-[#E8D5B7]/60 text-sm">Time Bonus</span>
+              <span className="text-[#4CAF50] font-mono text-sm">
+                +{score.timeBonus}
+              </span>
+            </div>
+          )}
+
+          {score && score.stealthBonus > 0 && (
             <div className="flex justify-between items-center">
               <span className="text-[#E8D5B7]/60 text-sm">Stealth</span>
-              <span className="text-[#FFD700] text-lg tracking-wider">
-                {Array.from({ length: stars }, (_, i) => (
-                  <span key={i}>&#9733;</span>
-                ))}
-                {Array.from({ length: 3 - stars }, (_, i) => (
-                  <span key={i} className="opacity-20">&#9733;</span>
-                ))}
+              <span className="text-[#4CAF50] font-mono text-sm">
+                +{score.stealthBonus}
+              </span>
+            </div>
+          )}
+
+          {score && score.stylePoints > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-[#E8D5B7]/60 text-sm">Style</span>
+              <span className="text-[#4CAF50] font-mono text-sm">
+                +{score.stylePoints}
+              </span>
+            </div>
+          )}
+
+          {score && (
+            <div className="flex justify-between items-center">
+              <span className="text-[#E8D5B7]/60 text-sm">Panic Moments</span>
+              <span className="text-[#FF6B6B] font-mono text-sm">
+                {score.panicMoments}
               </span>
             </div>
           )}
 
           <div className="flex justify-between items-center">
             <span className="text-[#E8D5B7]/60 text-sm">Item</span>
-            <span className={`text-sm font-bold ${hasItem ? "text-[#FFD700]" : "text-[#E8D5B7]/40"}`}>
+            <span
+              className={`text-sm font-bold ${hasItem ? "text-[#FFD700]" : "text-[#E8D5B7]/40"}`}
+            >
               {hasItem ? itemName : `${itemName} (missed)`}
             </span>
           </div>
+
+          {!hasEvents && role === "whisper" && (
+            <p className="text-[#E8D5B7]/40 text-xs text-center pt-1">
+              Score tracked for the Runner
+            </p>
+          )}
         </div>
 
-        {/* Players card */}
-        <div className="bg-black/30 rounded-xl p-5 space-y-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[#E8D5B7]/60 text-sm">Your Role</span>
-            <span className={`text-sm font-bold uppercase tracking-wider ${
-              role === "runner" ? "text-[#FF8C42]" : "text-[#8BB8E8]"
-            }`}>
-              {role}
-            </span>
+        {/* Highlight Reel */}
+        {highlights.length > 0 && (
+          <div className="bg-black/30 rounded-xl p-5 space-y-3">
+            <h3 className="text-[#FFD700] font-bold text-sm uppercase tracking-wider">
+              Highlight Reel
+            </h3>
+            <div className="space-y-2">
+              {highlights.map((h, i) => (
+                <div key={i} className="flex gap-3 border-l-2 border-[#FFD700]/30 pl-3">
+                  <span className="text-[#E8D5B7]/40 font-mono text-xs shrink-0 w-8 pt-0.5">
+                    {formatEventTime(h.timestamp)}
+                  </span>
+                  <span className="text-[#E8D5B7]/80 text-sm">
+                    {h.text}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex gap-3 pt-2">

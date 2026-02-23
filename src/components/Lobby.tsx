@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { generateMap } from "@/game/map-generator";
 import InviteLink from "./InviteLink";
 
 type Role = "runner" | "whisper";
@@ -40,7 +41,17 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   };
 
   const handleStartGame = async () => {
-    await startGame({ roomCode, sessionId });
+    // Generate map from seed and pass entity positions to the server
+    const map = generateMap(room!.mapSeed);
+    await startGame({
+      roomCode,
+      sessionId,
+      runnerSpawn: map.runnerSpawn,
+      guards: map.guardPatrols.map((g) => ({ id: g.guardId, x: g.spawnX, y: g.spawnY })),
+      items: [{ id: "item-1", x: map.targetItem.x, y: map.targetItem.y, name: map.targetItem.name }],
+      exitX: map.exitPos.x,
+      exitY: map.exitPos.y,
+    });
   };
 
   function getRoleCardState(role: Role): "available" | "selected" | "taken" {

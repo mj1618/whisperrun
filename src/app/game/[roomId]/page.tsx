@@ -6,6 +6,7 @@ import { useQuery } from "convex/react";
 import Link from "next/link";
 import { api } from "../../../../convex/_generated/api";
 import { getSessionId } from "@/lib/session";
+import { GameEvent } from "@/game/events";
 import Lobby from "@/components/Lobby";
 import GameCanvas from "@/components/GameCanvas";
 import RoomJoiner from "@/components/RoomJoiner";
@@ -23,6 +24,7 @@ export default function GamePage() {
   const params = useParams<{ roomId: string }>();
   const roomCode = params.roomId;
   const sessionId = useSessionId();
+  const [gameEvents, setGameEvents] = useState<GameEvent[]>([]);
 
   const room = useQuery(api.rooms.getRoom, { roomCode });
   const gameState = useQuery(
@@ -116,6 +118,7 @@ export default function GamePage() {
         roomCode={roomCode}
         sessionId={sessionId}
         role={playerRole}
+        events={gameEvents}
       />
     );
   }
@@ -126,6 +129,8 @@ export default function GamePage() {
       roomId={room._id}
       sessionId={sessionId}
       role={playerRole}
+      mapSeed={room.mapSeed}
+      onGameEnd={setGameEvents}
     />
   );
 }

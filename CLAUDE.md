@@ -47,6 +47,11 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Milestone 2 — Networking & Room System
 - **Completed:** Milestone 3 — Runner Gameplay
 - **Completed:** Milestone 4 — Whisper Gameplay
-- **In Progress:** Milestone 5 — Guard AI & Detection
+- **Completed:** Milestone 5 — Guard AI & Detection
+- **Completed:** Milestone 6 — Game State Sync & Full Loop (planning countdown, heist timer, timeout, results screen, play again)
+- **Completed:** Milestone 7 — Map System & Content (Procedural Generation) — seed-based map generator, room chunks, target items, guard patrol waypoints
+- **Completed:** Milestone 8a — Event Recording, Scoring & Highlights — EventRecorder, scoring breakdown, highlight reel, daily seed, daily challenge button
+- **Completed:** Milestone 8b — Visual Polish & Sprite System — procedural sprites for Runner/Guard/Items/Tiles, tile caching, walk animations, fog wobble, dust particles, scanline overlay, patrol route visualization
+- **Completed:** Integration Review — all M7/M8 modules integrated, build passes, lint clean, end-to-end wiring verified
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

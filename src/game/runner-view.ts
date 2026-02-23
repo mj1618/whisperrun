@@ -16,15 +16,28 @@ export function renderFogOfWar(
   canvasHeight: number,
   runnerScreenX: number,
   runnerScreenY: number,
-  radius: number
+  radius: number,
+  time: number = 0
 ) {
-  // 1. Draw the hard-edged fog with a circular hole
+  // 1. Draw the hard-edged fog with a wobbling circular hole
   ctx.save();
   ctx.beginPath();
   // Outer rectangle (full canvas)
   ctx.rect(0, 0, canvasWidth, canvasHeight);
-  // Inner circle (counter-clockwise = hole)
-  ctx.arc(runnerScreenX, runnerScreenY, radius, 0, Math.PI * 2, true);
+  // Inner wobbly circle (counter-clockwise = hole)
+  const segments = 48;
+  for (let i = segments; i >= 0; i--) {
+    const a = (i / segments) * Math.PI * 2;
+    const wobble = Math.sin(time * 2 + a * 3) * 4;
+    const r = radius + wobble;
+    const px = runnerScreenX + Math.cos(a) * r;
+    const py = runnerScreenY + Math.sin(a) * r;
+    if (i === segments) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
   ctx.closePath();
   ctx.fillStyle = "rgba(0, 0, 0, 0.88)";
   ctx.fill();
@@ -48,6 +61,33 @@ export function renderFogOfWar(
   ctx.fillStyle = gradient;
   ctx.fill();
   ctx.restore();
+
+  // 3. Vignette effect (darkened screen edges)
+  ctx.save();
+  const vignette = ctx.createRadialGradient(
+    runnerScreenX,
+    runnerScreenY,
+    radius * 0.5,
+    runnerScreenX,
+    runnerScreenY,
+    Math.max(canvasWidth, canvasHeight) * 0.7
+  );
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.3)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  ctx.restore();
+
+  // 4. Ambient dust particles floating in the visibility radius
+  for (let i = 0; i < 8; i++) {
+    const particleX = runnerScreenX + Math.sin(time * 0.5 + i * 1.3) * radius * 0.6;
+    const particleY = runnerScreenY + Math.cos(time * 0.4 + i * 1.7) * radius * 0.5;
+    const alpha = 0.15 + 0.1 * Math.sin(time * 1.5 + i * 2);
+    ctx.fillStyle = `rgba(255, 230, 180, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(particleX, particleY, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 /**

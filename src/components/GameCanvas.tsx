@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { GameLoop } from "@/engine/loop";
-import { Renderer, TILE_SIZE } from "@/engine/renderer";
+import { Renderer, TILE_SIZE, clearTileCache } from "@/engine/renderer";
 import { Camera } from "@/engine/camera";
 import { InputHandler } from "@/engine/input";
-import { FALLBACK_MAP, isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
+import { isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
+import { generateMap, GeneratedMap } from "@/game/map-generator";
 import { GameStateManager, LocalGameState } from "@/game/game-state";
 import { renderFogOfWar, renderPings } from "@/game/runner-view";
 import { renderBlueprintMap, renderWhisperEntities } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
-import { tickGuard, GuardData, GuardState } from "@/game/guard-ai";
+import { tickGuard, GuardData } from "@/game/guard-ai";
 import { EventRecorder, GameEvent } from "@/game/events";
 import HUD from "@/components/HUD";
 
@@ -21,6 +22,7 @@ interface GameCanvasProps {
   roomId: Id<"rooms">;
   sessionId: string;
   role: "runner" | "whisper";
+  mapSeed: number;
   onGameEnd?: (events: GameEvent[]) => void;
 }
 
@@ -38,14 +40,14 @@ const HITBOX_HALF = 0.3;
 // Planning phase duration in ms
 const PLANNING_DURATION = 30_000;
 
-function canMoveTo(x: number, y: number): boolean {
+function canMoveTo(x: number, y: number, map: TileType[][]): boolean {
   const corners = [
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y - HITBOX_HALF) },
     { col: Math.floor(x + HITBOX_HALF), row: Math.floor(y - HITBOX_HALF) },
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
     { col: Math.floor(x + HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
   ];
-  return corners.every((c) => isWalkable(FALLBACK_MAP, c.col, c.row));
+  return corners.every((c) => isWalkable(map, c.col, c.row));
 }
 
 function getInteraction(
@@ -53,7 +55,8 @@ function getInteraction(
   y: number,
   hasItem: boolean,
   hiding: boolean,
-  state: LocalGameState
+  state: LocalGameState,
+  map: TileType[][]
 ): "exit" | "pickup" | "hide" | "unhide" | null {
   if (hasItem) {
     const dist = Math.hypot(state.exitX - x, state.exitY - y);
@@ -78,11 +81,11 @@ function getInteraction(
       const c = tileCol + dc;
       if (
         r >= 0 &&
-        r < FALLBACK_MAP.length &&
+        r < map.length &&
         c >= 0 &&
-        c < (FALLBACK_MAP[0]?.length ?? 0)
+        c < (map[0]?.length ?? 0)
       ) {
-        if (FALLBACK_MAP[r][c] === TileType.HideSpot) {
+        if (map[r][c] === TileType.HideSpot) {
           const dist = Math.hypot(c - x, r - y);
           if (dist < 1.5) return "hide";
         }
@@ -142,6 +145,7 @@ export default function GameCanvas({
   roomId,
   sessionId,
   role,
+  mapSeed,
   onGameEnd,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -149,9 +153,37 @@ export default function GameCanvas({
   const timeRef = useRef(0);
   const eventRecorderRef = useRef(new EventRecorder());
   const onGameEndRef = useRef(onGameEnd);
+
+  // Walk animation state
+  const walkFrameRef = useRef(0);
+  const walkFrameAccumRef = useRef(0);
+  const facingAngleRef = useRef(0);
+  const guardWalkFrameRef = useRef<Record<string, number>>({});
+  const guardWalkAccumRef = useRef<Record<string, number>>({});
+  const guardPrevPosRef = useRef<Record<string, { x: number; y: number }>>({});
   useEffect(() => {
     onGameEndRef.current = onGameEnd;
   }, [onGameEnd]);
+
+  // Generate the map deterministically from the seed (memoized — same seed = same map)
+  const generatedMap = useMemo(() => generateMap(mapSeed), [mapSeed]);
+  const generatedMapRef = useRef<GeneratedMap>(generatedMap);
+  useEffect(() => {
+    generatedMapRef.current = generatedMap;
+  }, [generatedMap]);
+
+  // Build guard waypoint lookup from generated map
+  const guardWaypoints = useMemo(() => {
+    const waypointMap: Record<string, Array<{ x: number; y: number }>> = {};
+    for (const patrol of generatedMap.guardPatrols) {
+      waypointMap[patrol.guardId] = patrol.waypoints;
+    }
+    return waypointMap;
+  }, [generatedMap]);
+  const guardWaypointsRef = useRef(guardWaypoints);
+  useEffect(() => {
+    guardWaypointsRef.current = guardWaypoints;
+  }, [guardWaypoints]);
 
   // Force periodic re-render for HUD timer
   const [, setTick] = useState(0);
@@ -268,7 +300,7 @@ export default function GameCanvas({
       // Only ping on walkable tiles
       const col = Math.floor(tile.x);
       const row = Math.floor(tile.y);
-      if (!isWalkable(FALLBACK_MAP, col, row)) return;
+      if (!isWalkable(generatedMapRef.current.tiles, col, row)) return;
 
       addPingRef.current({
         roomId,
@@ -276,6 +308,9 @@ export default function GameCanvas({
         y: tile.y,
         type: selectedPingTypeRef.current,
       });
+
+      // Record ping event
+      eventRecorderRef.current.record("ping_sent", { x: tile.x, y: tile.y });
     };
 
     canvas.addEventListener("pointerdown", handleClick);
@@ -313,10 +348,9 @@ export default function GameCanvas({
     let prevPhase: string = "";
     let prevHasItem = false;
     let prevHiding = false;
-    let prevGuardStates: Record<string, GuardState> = {};
-    let lastNearMissTime: Record<string, number> = {};
-    let wasNearGuardWhileCrouching: Record<string, boolean> = {};
-    let prevDistToGuard: Record<string, number> = {};
+    const lastNearMissTime: Record<string, number> = {};
+    const wasNearGuardWhileCrouching: Record<string, boolean> = {};
+    const prevDistToGuard: Record<string, number> = {};
     let gameEndFired = false;
 
     const update = (dt: number) => {
@@ -325,6 +359,8 @@ export default function GameCanvas({
 
       const state = gsm.getState();
       if (!state) return;
+
+      const map = generatedMapRef.current;
 
       // --- Event recording: phase transitions ---
       if (state.phase !== prevPhase) {
@@ -446,13 +482,24 @@ export default function GameCanvas({
           let newY = gsm.localRunnerY;
 
           const tryX = newX + dx * speed * dt;
-          if (canMoveTo(tryX, newY)) newX = tryX;
+          if (canMoveTo(tryX, newY, map.tiles)) newX = tryX;
 
           const tryY = newY + dy * speed * dt;
-          if (canMoveTo(newX, tryY)) newY = tryY;
+          if (canMoveTo(newX, tryY, map.tiles)) newY = tryY;
 
           gsm.setLocalRunnerPosition(newX, newY, crouching);
           setHudCrouchingRef.current(crouching);
+
+          // Walk animation tracking
+          const runnerMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01;
+          if (runnerMoving) {
+            walkFrameAccumRef.current += dt * 8; // 8 fps walk cycle
+            walkFrameRef.current = Math.floor(walkFrameAccumRef.current) % 4;
+            facingAngleRef.current = Math.atan2(dy, dx);
+          } else {
+            walkFrameAccumRef.current = 0;
+            walkFrameRef.current = 0;
+          }
 
           const now = performance.now();
           if (now - lastSendTime > SEND_INTERVAL) {
@@ -473,17 +520,70 @@ export default function GameCanvas({
 
           let worstState: string = "patrol";
           for (let i = 0; i < localGuardsRef.current.length; i++) {
+            const guard = localGuardsRef.current[i];
+            const oldState = guard.state;
+            const wps = guardWaypointsRef.current[guard.id];
             const result = tickGuard(
-              localGuardsRef.current[i],
+              guard,
               runnerForGuard,
               dt,
-              FALLBACK_MAP,
-              now
+              map.tiles,
+              now,
+              wps
             );
             localGuardsRef.current[i] = {
-              ...localGuardsRef.current[i],
+              ...guard,
               ...result,
             };
+
+            // Guard walk animation
+            const prevPos = guardPrevPosRef.current[guard.id];
+            const guardMoving = prevPos
+              ? Math.abs(result.x - prevPos.x) > 0.001 || Math.abs(result.y - prevPos.y) > 0.001
+              : false;
+            if (guardMoving) {
+              guardWalkAccumRef.current[guard.id] = (guardWalkAccumRef.current[guard.id] ?? 0) + dt * 6; // 6 fps
+              guardWalkFrameRef.current[guard.id] = Math.floor(guardWalkAccumRef.current[guard.id]) % 4;
+            } else {
+              guardWalkAccumRef.current[guard.id] = 0;
+              guardWalkFrameRef.current[guard.id] = 0;
+            }
+            guardPrevPosRef.current[guard.id] = { x: result.x, y: result.y };
+
+            const newState = localGuardsRef.current[i].state;
+
+            // --- Event recording: guard state transitions ---
+            if (oldState !== "alert" && newState === "alert") {
+              recorder.record("guard_alert", { guardId: guard.id });
+            }
+            if (oldState === "alert" && newState === "returning") {
+              recorder.record("guard_lost", { guardId: guard.id });
+            }
+
+            // --- Event recording: near-miss detection ---
+            const updatedGuard = localGuardsRef.current[i];
+            const dist = Math.hypot(updatedGuard.x - gsm.localRunnerX, updatedGuard.y - gsm.localRunnerY);
+            const prevDist = prevDistToGuard[guard.id] ?? dist;
+            if (newState === "alert" && dist < 2.0 && dist > prevDist) {
+              const lastTime = lastNearMissTime[guard.id] ?? 0;
+              if (now - lastTime > 3000) {
+                recorder.record("near_miss", { guardId: guard.id, distance: dist });
+                lastNearMissTime[guard.id] = now;
+              }
+            }
+            prevDistToGuard[guard.id] = dist;
+
+            // --- Event recording: crouching sneak ---
+            if (newState === "alert") {
+              // Reset if guard alerted — doesn't count as a clean sneak
+              wasNearGuardWhileCrouching[guard.id] = false;
+            } else if (gsm.localCrouching && dist < 3.0 && newState === "patrol") {
+              wasNearGuardWhileCrouching[guard.id] = true;
+            } else if (wasNearGuardWhileCrouching[guard.id] && dist >= 3.0 && newState === "patrol") {
+              recorder.record("crouching_sneak", { guardId: guard.id });
+              wasNearGuardWhileCrouching[guard.id] = false;
+            }
+
             // Track worst alert state for HUD
             const gs = localGuardsRef.current[i].state;
             if (gs === "alert") worstState = "alert";
@@ -522,7 +622,8 @@ export default function GameCanvas({
             gsm.localRunnerY,
             state.runner.hasItem,
             state.runner.hiding,
-            state
+            state,
+            map.tiles
           );
           if (interaction) {
             interactRunnerRef.current({ roomId, sessionId, action: interaction });
@@ -544,18 +645,18 @@ export default function GameCanvas({
       const { width: canvasWidth, height: canvasHeight } = renderer.getCanvasSize();
       const ctx = renderer.getContext();
 
+      const map = generatedMapRef.current;
+
       if (role === "runner") {
         // ---- Runner rendering path ----
         renderer.clear();
-        renderer.drawTileMap(FALLBACK_MAP);
+        renderer.drawTileMap(map.tiles, timeRef.current);
 
         if (!state) return;
 
-        renderer.drawExit(state.exitX, state.exitY, timeRef.current);
-
         for (const item of state.items) {
           if (!item.pickedUp) {
-            renderer.drawItem(item.x, item.y);
+            renderer.drawItem(item.x, item.y, timeRef.current);
           }
         }
 
@@ -564,13 +665,22 @@ export default function GameCanvas({
           ? localGuardsRef.current
           : state.guards;
         for (const guard of guardsToRender) {
-          renderer.drawGuard(guard.x, guard.y, guard.angle, guard.state);
+          const gWalkFrame = guardWalkFrameRef.current[guard.id] ?? 0;
+          renderer.drawGuard(guard.x, guard.y, guard.angle, guard.state, gWalkFrame, timeRef.current);
         }
 
         const runnerX = gsm.localRunnerX;
         const runnerY = gsm.localRunnerY;
         const crouching = gsm.localCrouching;
-        renderer.drawRunner(runnerX, runnerY, crouching, state.runner.hiding);
+        renderer.drawRunner(
+          runnerX,
+          runnerY,
+          crouching,
+          state.runner.hiding,
+          state.runner.hasItem,
+          walkFrameRef.current,
+          facingAngleRef.current
+        );
 
         // Fog of war
         const screen = camera.worldToScreen(
@@ -578,7 +688,7 @@ export default function GameCanvas({
           runnerY * TILE_SIZE + TILE_SIZE / 2
         );
         const visRadius = crouching ? CROUCH_VIS_RADIUS : WALK_VIS_RADIUS;
-        renderFogOfWar(ctx, canvasWidth, canvasHeight, screen.x, screen.y, visRadius);
+        renderFogOfWar(ctx, canvasWidth, canvasHeight, screen.x, screen.y, visRadius, timeRef.current);
 
         // Pings (rendered above fog)
         renderPings(ctx, camera, state.pings, canvasWidth, canvasHeight);
@@ -591,8 +701,8 @@ export default function GameCanvas({
         if (!state) return;
 
         // Calculate zoom to fit entire map
-        const mapPixelW = getMapWidth(FALLBACK_MAP) * TILE_SIZE;
-        const mapPixelH = getMapHeight(FALLBACK_MAP) * TILE_SIZE;
+        const mapPixelW = getMapWidth(map.tiles) * TILE_SIZE;
+        const mapPixelH = getMapHeight(map.tiles) * TILE_SIZE;
         const scale = Math.min(canvasWidth / mapPixelW, canvasHeight / mapPixelH) * 0.9;
         const offsetX = (canvasWidth - mapPixelW * scale) / 2;
         const offsetY = (canvasHeight - mapPixelH * scale) / 2;
@@ -604,8 +714,8 @@ export default function GameCanvas({
         ctx.translate(offsetX, offsetY);
         ctx.scale(scale, scale);
 
-        renderBlueprintMap(ctx, FALLBACK_MAP);
-        renderWhisperEntities(ctx, state, timeRef.current);
+        renderBlueprintMap(ctx, map.tiles);
+        renderWhisperEntities(ctx, state, timeRef.current, guardWaypointsRef.current);
 
         ctx.restore();
       }
@@ -624,6 +734,7 @@ export default function GameCanvas({
       input.detach();
       window.removeEventListener("resize", resize);
       clearInterval(hudInterval);
+      clearTileCache();
     };
   }, [roomId, role, sessionId]);
 
@@ -663,69 +774,6 @@ export default function GameCanvas({
           role={role}
           onStartHeist={handleStartHeist}
         />
-      )}
-
-      {/* Escaped overlay */}
-      {phase === "escaped" && (
-        <div className="absolute inset-0 flex items-center justify-center z-20">
-          <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
-            <h2 className="text-3xl font-bold text-[#4CAF50]">
-              You Escaped!
-            </h2>
-            <p className="text-[#E8D5B7]/70">
-              The heist was a success! The loot is yours.
-            </p>
-            <Link
-              href="/"
-              className="inline-block px-6 py-2 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
-                         hover:bg-[#FFC107] transition-colors"
-            >
-              Back to Home
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {/* Caught overlay */}
-      {phase === "caught" && (
-        <div className="absolute inset-0 flex items-center justify-center z-20">
-          <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
-            <h2 className="text-3xl font-bold text-[#FF6B6B]">
-              Busted!
-            </h2>
-            <p className="text-[#E8D5B7]/70">
-              The guard politely escorted you out of the building. Better luck next time!
-            </p>
-            <Link
-              href="/"
-              className="inline-block px-6 py-2 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
-                         hover:bg-[#FFC107] transition-colors"
-            >
-              Back to Home
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {/* Timeout overlay */}
-      {phase === "timeout" && (
-        <div className="absolute inset-0 flex items-center justify-center z-20">
-          <div className="bg-black/70 rounded-2xl p-8 text-center space-y-4 max-w-sm">
-            <h2 className="text-3xl font-bold text-[#FFD700]">
-              Time&apos;s Up!
-            </h2>
-            <p className="text-[#E8D5B7]/70">
-              You ran out of time. The heist is over!
-            </p>
-            <Link
-              href="/"
-              className="inline-block px-6 py-2 bg-[#FFD700] text-[#2D1B0E] font-bold rounded-lg
-                         hover:bg-[#FFC107] transition-colors"
-            >
-              Back to Home
-            </Link>
-          </div>
-        </div>
       )}
 
       {/* Controls hint */}
