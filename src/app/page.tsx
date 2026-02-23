@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { getSessionId } from "@/lib/session";
+import DailyLeaderboard from "@/components/DailyLeaderboard";
 
 export default function Home() {
   const router = useRouter();
@@ -86,6 +87,9 @@ export default function Home() {
         <p className="text-sm text-[#8B7355]">
           No account needed — just share the link with a friend
         </p>
+
+        {/* Daily Leaderboard */}
+        <DailyLeaderboard />
       </div>
 
       {/* Version label */}

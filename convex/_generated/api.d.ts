@@ -9,6 +9,7 @@
  */
 
 import type * as game from "../game.js";
+import type * as leaderboard from "../leaderboard.js";
 import type * as rooms from "../rooms.js";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   game: typeof game;
+  leaderboard: typeof leaderboard;
   rooms: typeof rooms;
 }>;
 

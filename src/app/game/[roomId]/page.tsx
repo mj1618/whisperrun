@@ -7,6 +7,7 @@ import Link from "next/link";
 import { api } from "../../../../convex/_generated/api";
 import { getSessionId } from "@/lib/session";
 import { GameEvent } from "@/game/events";
+import { DifficultyLevel } from "@/game/difficulty";
 import Lobby from "@/components/Lobby";
 import GameCanvas from "@/components/GameCanvas";
 import RoomJoiner from "@/components/RoomJoiner";
@@ -120,11 +121,13 @@ export default function GamePage() {
         sessionId={sessionId}
         role={playerRole}
         events={gameEvents}
+        mapSeed={room.mapSeed}
       />
     );
   }
 
   // Playing state — show game
+  const gameDifficulty = (gameState?.difficulty as DifficultyLevel | undefined) ?? (room.difficulty as DifficultyLevel | undefined) ?? "standard";
   return (
     <GameCanvas
       roomId={room._id}
@@ -132,6 +135,7 @@ export default function GamePage() {
       sessionId={sessionId}
       role={playerRole}
       mapSeed={room.mapSeed}
+      difficulty={gameDifficulty}
       onGameEnd={setGameEvents}
     />
   );

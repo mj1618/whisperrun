@@ -61,7 +61,8 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Mobile Touch Controls — floating virtual joystick for Runner, touch buttons for crouch/interact, 44px touch targets, viewport zoom prevention, touch-none CSS
 - **Completed:** Interactive Doors — doors start closed and block movement/vision, Runner toggles with interact key (makes noise), guards open doors on patrol, closed doors block guard/camera LOS
 - **Completed:** Whisper Path Drawing — Shift+drag to draw routes on blueprint, Runner sees glowing trail through fog of war, 15s fadeout during heist, mobile draw-mode toggle
-- **Queued:** Difficulty Levels — Casual/Standard/Hard selector in lobby, parameterizes map size, guard count/speed/vision, camera count, heist timer, planning duration
-- **Queued:** Daily Challenge Leaderboard — Convex leaderboard table, auto-submit scores after daily challenge escapes, team name generator, leaderboard display on landing page and results screen
+- **Completed:** Difficulty Levels — Casual/Standard/Hard selector in lobby, parameterizes map size (3x2/4x3/5x3), guard count/speed/vision, camera count/range, heist timer, planning duration, difficulty badge in HUD
+- **Completed:** Daily Challenge Leaderboard — Convex leaderboard table with date+score index, auto-submit scores after daily challenge escapes (Runner client, duplicate prevention via roomCode), deterministic team name generator, leaderboard display on landing page and results screen with highlighted current team entry, real-time updates via Convex subscription
+- **Queued:** Whisper Quick-Comms — predefined short messages (STOP!, GO NOW!, BEHIND YOU!, HIDE!, You're safe, Nice move!) sent by Whisper to Runner, large overlay with sound cues, keyboard shortcuts (Q/W/E/R/T/Y), 1.5s cooldown, mobile touch buttons
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

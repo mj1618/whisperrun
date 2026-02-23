@@ -102,6 +102,10 @@ export default defineSchema({
         createdAt: v.number(),
       })
     ),
+    quickComm: v.optional(v.object({
+      messageId: v.string(),
+      createdAt: v.number(),
+    })),
     exitX: v.number(),
     exitY: v.number(),
     phase: v.union(
