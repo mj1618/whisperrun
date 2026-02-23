@@ -111,7 +111,7 @@ function ControlsPopup({
 }) {
   return (
     <div
-      className="absolute inset-0 z-30 flex items-center justify-center"
+      className="absolute inset-0 z-30 flex items-center justify-center pointer-events-auto"
       onClick={onClose}
     >
       <div

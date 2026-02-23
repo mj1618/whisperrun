@@ -141,8 +141,8 @@ function PlanningOverlay({
   const remainingSeconds = Math.ceil(remaining / 1000);
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center z-20">
-      <div className="bg-black/70 rounded-2xl p-6 text-center space-y-3 max-w-lg">
+    <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+      <div className="bg-black/70 rounded-2xl p-6 text-center space-y-3 max-w-lg pointer-events-auto">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-[#E8D5B7]/60 uppercase tracking-wider">
             Planning Phase
