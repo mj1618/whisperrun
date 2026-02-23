@@ -30,12 +30,21 @@ export interface GameEvent {
   };
 }
 
+export interface PositionPoint {
+  x: number;
+  y: number;
+  t: number;
+  crouching: boolean;
+}
+
 export class EventRecorder {
   private events: GameEvent[] = [];
   private heistStartTime: number = 0;
+  private positionTrail: PositionPoint[] = [];
 
   start(heistStartTime: number): void {
     this.events = [];
+    this.positionTrail = [];
     this.heistStartTime = heistStartTime;
     this.record("heist_start");
   }
@@ -63,8 +72,24 @@ export class EventRecorder {
     return nearMisses.length > 0 ? Math.min(...nearMisses) : null;
   }
 
+  recordPosition(x: number, y: number, crouching: boolean): void {
+    const t = Date.now() - this.heistStartTime;
+    const last = this.positionTrail[this.positionTrail.length - 1];
+    if (last) {
+      const dx = x - last.x;
+      const dy = y - last.y;
+      if (dx * dx + dy * dy < 0.09) return; // 0.3^2 threshold
+    }
+    this.positionTrail.push({ x, y, t, crouching });
+  }
+
+  getPositionTrail(): PositionPoint[] {
+    return [...this.positionTrail];
+  }
+
   reset(): void {
     this.events = [];
+    this.positionTrail = [];
     this.heistStartTime = 0;
   }
 }

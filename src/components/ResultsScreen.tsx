@@ -4,11 +4,24 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { GameEvent } from "@/game/events";
+import { GameEvent, PositionPoint } from "@/game/events";
+import { DifficultyLevel } from "@/game/difficulty";
 import { calculateScore } from "@/game/scoring";
 import { generateHighlights, formatEventTime } from "@/game/highlights";
 import { generateTeamName } from "@/lib/team-names";
+import { generateShareText } from "@/lib/share";
 import DailyLeaderboard from "@/components/DailyLeaderboard";
+import ReplayMap from "@/components/ReplayMap";
+
+function ShareIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 8v5a1 1 0 001 1h6a1 1 0 001-1V8" />
+      <polyline points="8 2 8 10" />
+      <polyline points="5 5 8 2 11 5" />
+    </svg>
+  );
+}
 
 interface ResultsScreenProps {
   outcome: "escaped" | "caught" | "timeout" | "disconnected";
@@ -19,7 +32,9 @@ interface ResultsScreenProps {
   sessionId: string;
   role: "runner" | "whisper";
   events?: GameEvent[];
+  positionTrail?: PositionPoint[];
   mapSeed: number;
+  difficulty?: DifficultyLevel;
 }
 
 function formatDuration(ms: number): string {
@@ -79,7 +94,9 @@ export default function ResultsScreen({
   sessionId,
   role,
   events,
+  positionTrail,
   mapSeed,
+  difficulty,
 }: ResultsScreenProps) {
   const router = useRouter();
   const resetRoom = useMutation(api.rooms.resetRoom);
@@ -89,6 +106,7 @@ export default function ResultsScreen({
     heistStartTime ? Date.now() - heistStartTime : 0
   );
   const [scoreSubmitted, setScoreSubmitted] = useState(false);
+  const [copied, setCopied] = useState(false);
   const submitAttempted = useRef(false);
 
   const isDisconnected = outcome === "disconnected";
@@ -149,6 +167,40 @@ export default function ResultsScreen({
 
   const handleHome = () => {
     router.push("/");
+  };
+
+  const handleShare = async () => {
+    const teamName = generateTeamName(roomCode);
+    const text = generateShareText({
+      outcome,
+      score: score?.total ?? 0,
+      stealthRating: stars,
+      playStyleTitle: score?.playStyleTitle ?? "",
+      heistDurationMs: heistDuration,
+      itemName,
+      hasItem,
+      teamName,
+      isDaily,
+      panicMoments: score?.panicMoments ?? 0,
+    });
+    if (!text) return;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch {
+        // User cancelled or not supported — fall through to clipboard
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access denied — ignore silently
+    }
   };
 
   return (
@@ -264,6 +316,22 @@ export default function ResultsScreen({
             </div>
           )}
 
+          {/* Visual Heist Replay */}
+          {hasEvents && positionTrail && positionTrail.length > 0 && (
+            <div className="bg-black/30 rounded-xl p-4 space-y-2">
+              <h3 className="text-[#FFD700] font-bold text-sm uppercase tracking-wider">
+                Heist Replay
+              </h3>
+              <ReplayMap
+                mapSeed={mapSeed}
+                difficulty={difficulty ?? "standard"}
+                positionTrail={positionTrail}
+                events={events!}
+                outcome={outcome}
+              />
+            </div>
+          )}
+
           {/* Leaderboard submission confirmation */}
           {isDaily && scoreSubmitted && (
             <p className="text-[#4CAF50] text-sm text-center">
@@ -290,6 +358,28 @@ export default function ResultsScreen({
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Share button — only for non-disconnected games with a score */}
+          {!isDisconnected && score && (
+            <button
+              onClick={handleShare}
+              className="w-full px-6 py-3 bg-[#E8D5B7]/10 text-[#E8D5B7] font-bold rounded-lg
+                         hover:bg-[#E8D5B7]/20 transition-all text-sm border border-[#E8D5B7]/20
+                         cursor-pointer flex items-center justify-center gap-2"
+            >
+              {copied ? (
+                <>
+                  <span className="text-[#4CAF50]">✓</span>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <ShareIcon />
+                  Share Score
+                </>
+              )}
+            </button>
           )}
 
           {/* Action buttons */}

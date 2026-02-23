@@ -29,7 +29,7 @@ import {
   NOISE_RADIUS_RUNNING,
 } from "@/game/guard-ai";
 import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
-import { EventRecorder, GameEvent } from "@/game/events";
+import { EventRecorder, GameEvent, PositionPoint } from "@/game/events";
 import {
   initAudio,
   isAudioReady,
@@ -61,7 +61,7 @@ interface GameCanvasProps {
   role: "runner" | "whisper";
   mapSeed: number;
   difficulty?: DifficultyLevel;
-  onGameEnd?: (events: GameEvent[]) => void;
+  onGameEnd?: (data: { events: GameEvent[]; positionTrail: PositionPoint[] }) => void;
 }
 
 // Movement speeds in tiles/second
@@ -830,7 +830,10 @@ export default function GameCanvas({
             if (state.phase === "escaped") playGameOverEscaped();
             if (state.phase === "caught") playGameOverCaught();
           }
-          onGameEndRef.current?.(recorder.getEvents());
+          onGameEndRef.current?.({
+            events: recorder.getEvents(),
+            positionTrail: recorder.getPositionTrail(),
+          });
         }
         return;
       }
@@ -965,6 +968,9 @@ export default function GameCanvas({
             lastSendTime = now;
             moveRunnerRef.current({ roomId, x: newX, y: newY, crouching });
           }
+
+          // Record position for replay map
+          recorder.recordPosition(newX, newY, crouching);
         }
 
         const guardDiffConfig: GuardDifficultyConfig = {
