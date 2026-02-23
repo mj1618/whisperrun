@@ -13,6 +13,10 @@ export const ALERT_DURATION = 6000; // ms — chase timeout
 export const WAYPOINT_PAUSE = 1000; // ms — pause at each waypoint
 const GUARD_HITBOX_HALF = 0.3;
 
+// --- Noise Detection Constants ---
+export const NOISE_RADIUS_RUNNING = 3.5; // tiles — walking at normal speed
+export const NOISE_COOLDOWN = 4000; // ms — minimum time between noise alerts per guard
+
 // --- Types ---
 
 export type GuardState = "patrol" | "suspicious" | "alert" | "returning";
@@ -27,6 +31,7 @@ export interface GuardData {
   lastKnownX?: number;
   lastKnownY?: number;
   stateTimer?: number;
+  noiseCooldownUntil?: number;
 }
 
 export interface RunnerData {
@@ -34,6 +39,7 @@ export interface RunnerData {
   y: number;
   crouching: boolean;
   hiding: boolean;
+  moving: boolean;
 }
 
 export interface GuardUpdate {
@@ -46,6 +52,7 @@ export interface GuardUpdate {
   lastKnownY?: number;
   stateTimer?: number;
   caught?: boolean;
+  noiseCooldownUntil?: number;
 }
 
 // --- Default Patrol Waypoints (fallback for legacy maps) ---
@@ -59,6 +66,68 @@ export const DEFAULT_GUARD_WAYPOINTS: Record<string, Array<{ x: number; y: numbe
     { x: 9, y: 12 },
   ],
 };
+
+// --- Camera Constants ---
+
+export const CAMERA_FOV = 90; // degrees — wider than guards
+export const CAMERA_RANGE = 7; // tiles
+export const CAMERA_CROUCH_RANGE = 5; // tiles — cameras less affected by crouching
+export const CAMERA_SWEEP_SPEED = 0.8; // radians per second
+export const CAMERA_SWEEP_ARC = Math.PI / 2; // ±45° from base angle
+export const CAMERA_ALERT_COOLDOWN = 5000; // ms between alerts from the same camera
+
+export interface CameraData {
+  id: string;
+  x: number;
+  y: number;
+  baseAngle: number;
+}
+
+/** Compute camera sweep angle. Cameras oscillate back and forth (sinusoidal). */
+export function updateCameraAngle(
+  baseAngle: number,
+  elapsed: number // total elapsed time in seconds since heist start
+): number {
+  return baseAngle + Math.sin(elapsed * CAMERA_SWEEP_SPEED) * CAMERA_SWEEP_ARC;
+}
+
+/** Check if a camera can see the Runner */
+export function canCameraSeeRunner(
+  camera: { x: number; y: number; angle: number },
+  runner: RunnerData,
+  map: TileType[][]
+): boolean {
+  if (runner.hiding) return false;
+
+  const dx = runner.x - camera.x;
+  const dy = runner.y - camera.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  const range = runner.crouching ? CAMERA_CROUCH_RANGE : CAMERA_RANGE;
+  if (dist > range) return false;
+
+  const angleToRunner = Math.atan2(dy, dx);
+  const diff = Math.abs(angleDiff(angleToRunner, camera.angle));
+  const halfFovRad = ((CAMERA_FOV * Math.PI) / 180) / 2;
+  if (diff > halfFovRad) return false;
+
+  if (!isLineOfSightClear(camera.x, camera.y, runner.x, runner.y, map)) {
+    return false;
+  }
+
+  return true;
+}
+
+/** Convert a facing direction string to radians */
+export function facingToAngle(facing?: "up" | "down" | "left" | "right"): number {
+  switch (facing) {
+    case "up": return -Math.PI / 2;
+    case "down": return Math.PI / 2;
+    case "left": return Math.PI;
+    case "right": return 0;
+    default: return 0;
+  }
+}
 
 // --- Helpers ---
 
@@ -114,6 +183,34 @@ export function canGuardSeeRunner(
   if (diff > halfFovRad) return false;
 
   // Wall occlusion check
+  if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Check if a guard can hear the Runner's footsteps.
+ * Noise is omnidirectional but blocked by walls.
+ * Only triggers for moving, non-crouching, non-hiding runners.
+ */
+export function canGuardHearRunner(
+  guard: { x: number; y: number; state: GuardState },
+  runner: RunnerData,
+  map: TileType[][]
+): boolean {
+  if (!runner.moving) return false;
+  if (runner.crouching) return false;
+  if (runner.hiding) return false;
+  if (guard.state !== "patrol" && guard.state !== "returning") return false;
+
+  const dx = runner.x - guard.x;
+  const dy = runner.y - guard.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  if (dist > NOISE_RADIUS_RUNNING) return false;
+
   if (!isLineOfSightClear(guard.x, guard.y, runner.x, runner.y, map)) {
     return false;
   }
@@ -198,6 +295,24 @@ export function tickGuard(
           lastKnownX: runner.x,
           lastKnownY: runner.y,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
+        };
+      }
+
+      // If guard hears runner → go suspicious (investigate noise source)
+      const canHearPatrol = canGuardHearRunner(guard, runner, map);
+      const noiseCooldownOkPatrol = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
+      if (canHearPatrol && noiseCooldownOkPatrol) {
+        return {
+          x: guard.x,
+          y: guard.y,
+          angle: Math.atan2(runner.y - guard.y, runner.x - guard.x),
+          state: "suspicious",
+          targetWaypoint: guard.targetWaypoint,
+          lastKnownX: runner.x,
+          lastKnownY: runner.y,
+          stateTimer: now,
+          noiseCooldownUntil: now + NOISE_COOLDOWN,
         };
       }
 
@@ -208,6 +323,7 @@ export function tickGuard(
           angle: guard.angle,
           state: "patrol",
           targetWaypoint: 0,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -227,6 +343,7 @@ export function tickGuard(
             state: "patrol",
             targetWaypoint: nextWp,
             stateTimer: now,
+            noiseCooldownUntil: guard.noiseCooldownUntil,
           };
         }
         // Still pausing
@@ -237,6 +354,7 @@ export function tickGuard(
           state: "patrol",
           targetWaypoint: guard.targetWaypoint,
           stateTimer: timer,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -249,6 +367,7 @@ export function tickGuard(
         state: "patrol",
         targetWaypoint: guard.targetWaypoint,
         stateTimer: guard.stateTimer,
+        noiseCooldownUntil: guard.noiseCooldownUntil,
       };
     }
 
@@ -264,6 +383,7 @@ export function tickGuard(
           lastKnownX: runner.x,
           lastKnownY: runner.y,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -282,6 +402,7 @@ export function tickGuard(
             state: "returning",
             targetWaypoint: guard.targetWaypoint,
             stateTimer: now,
+            noiseCooldownUntil: guard.noiseCooldownUntil,
           };
         }
         return {
@@ -293,6 +414,7 @@ export function tickGuard(
           lastKnownX: lkx,
           lastKnownY: lky,
           stateTimer: timer,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -307,6 +429,7 @@ export function tickGuard(
         lastKnownX: lkx,
         lastKnownY: lky,
         stateTimer: guard.stateTimer,
+        noiseCooldownUntil: guard.noiseCooldownUntil,
       };
     }
 
@@ -334,6 +457,7 @@ export function tickGuard(
           lastKnownY: lky,
           stateTimer: timer,
           caught: true,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -346,6 +470,7 @@ export function tickGuard(
           state: "returning",
           targetWaypoint: guard.targetWaypoint,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -362,6 +487,7 @@ export function tickGuard(
             state: "returning",
             targetWaypoint: guard.targetWaypoint,
             stateTimer: now,
+            noiseCooldownUntil: guard.noiseCooldownUntil,
           };
         }
       }
@@ -381,6 +507,7 @@ export function tickGuard(
         lastKnownX: lkx,
         lastKnownY: lky,
         stateTimer: timer,
+        noiseCooldownUntil: guard.noiseCooldownUntil,
       };
     }
 
@@ -396,6 +523,24 @@ export function tickGuard(
           lastKnownX: runner.x,
           lastKnownY: runner.y,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
+        };
+      }
+
+      // If guard hears runner → go suspicious
+      const canHearReturning = canGuardHearRunner(guard, runner, map);
+      const noiseCooldownOkReturning = !guard.noiseCooldownUntil || now >= guard.noiseCooldownUntil;
+      if (canHearReturning && noiseCooldownOkReturning) {
+        return {
+          x: guard.x,
+          y: guard.y,
+          angle: Math.atan2(runner.y - guard.y, runner.x - guard.x),
+          state: "suspicious",
+          targetWaypoint: guard.targetWaypoint,
+          lastKnownX: runner.x,
+          lastKnownY: runner.y,
+          stateTimer: now,
+          noiseCooldownUntil: now + NOISE_COOLDOWN,
         };
       }
 
@@ -408,6 +553,7 @@ export function tickGuard(
           state: "patrol",
           targetWaypoint: 0,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -434,6 +580,7 @@ export function tickGuard(
           state: "patrol",
           targetWaypoint: nextWp,
           stateTimer: now,
+          noiseCooldownUntil: guard.noiseCooldownUntil,
         };
       }
 
@@ -444,6 +591,7 @@ export function tickGuard(
         angle: moved.angle,
         state: "returning",
         targetWaypoint: guard.targetWaypoint,
+        noiseCooldownUntil: guard.noiseCooldownUntil,
       };
     }
 

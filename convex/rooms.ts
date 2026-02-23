@@ -220,6 +220,12 @@ export const startGame = mutation({
     }))),
     exitX: v.optional(v.number()),
     exitY: v.optional(v.number()),
+    cameras: v.optional(v.array(v.object({
+      id: v.string(),
+      x: v.number(),
+      y: v.number(),
+      baseAngle: v.number(),
+    }))),
   },
   handler: async (ctx, args) => {
     const room = await ctx.db
@@ -260,6 +266,7 @@ export const startGame = mutation({
     const itemData = args.items ?? [{ id: "item-1", x: 17, y: 7, name: "Golden Rubber Duck" }];
     const exitX = args.exitX ?? 6;
     const exitY = args.exitY ?? 14;
+    const cameraData = args.cameras ?? [];
 
     // Basic bounds validation — map is ~46x35 tiles max
     const MAX_COORD = 50;
@@ -268,6 +275,7 @@ export const startGame = mutation({
       { x: exitX, y: exitY },
       ...guardData.map((g) => ({ x: g.x, y: g.y })),
       ...itemData.map((i) => ({ x: i.x, y: i.y })),
+      ...cameraData.map((c) => ({ x: c.x, y: c.y })),
     ];
     for (const pos of allPositions) {
       if (pos.x < 0 || pos.x > MAX_COORD || pos.y < 0 || pos.y > MAX_COORD) {
@@ -294,6 +302,7 @@ export const startGame = mutation({
         pickedUp: false,
         name: i.name,
       })),
+      cameras: cameraData,
       exitX,
       exitY,
       pings: [],

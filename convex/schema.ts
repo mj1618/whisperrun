@@ -73,6 +73,14 @@ export default defineSchema({
         name: v.string(),
       })
     ),
+    cameras: v.array(
+      v.object({
+        id: v.string(),
+        x: v.number(),
+        y: v.number(),
+        baseAngle: v.number(),
+      })
+    ),
     exitX: v.number(),
     exitY: v.number(),
     phase: v.union(

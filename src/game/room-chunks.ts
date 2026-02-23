@@ -19,7 +19,7 @@ export interface RoomChunk {
   };
   guardSpawns?: Array<{ x: number; y: number }>;
   hideSpots?: Array<{ x: number; y: number }>;
-  cameraSpots?: Array<{ x: number; y: number }>;
+  cameraSpots?: Array<{ x: number; y: number; facing?: "up" | "down" | "left" | "right" }>;
   itemSpots?: Array<{ x: number; y: number }>;
 }
 
@@ -43,7 +43,7 @@ const OFFICE: RoomChunk = {
   },
   guardSpawns: [{ x: 4, y: 2 }],
   hideSpots: [{ x: 4, y: 5 }],
-  cameraSpots: [{ x: 7, y: 5 }],
+  cameraSpots: [{ x: 7, y: 5, facing: "left" }],
   itemSpots: [{ x: 4, y: 4 }],
 };
 
@@ -139,7 +139,7 @@ const LIVING_ROOM: RoomChunk = {
   },
   guardSpawns: [{ x: 4, y: 4 }],
   hideSpots: [{ x: 2, y: 6 }],
-  cameraSpots: [{ x: 7, y: 7 }],
+  cameraSpots: [{ x: 7, y: 7, facing: "left" }],
   itemSpots: [{ x: 4, y: 2 }],
 };
 
@@ -201,7 +201,7 @@ const SERVER_ROOM: RoomChunk = {
     top: [3],
     bottom: [3],
   },
-  cameraSpots: [{ x: 1, y: 5 }],
+  cameraSpots: [{ x: 1, y: 5, facing: "right" }],
   itemSpots: [{ x: 3, y: 3 }],
 };
 

@@ -24,6 +24,12 @@ export interface LocalGameState {
     pickedUp: boolean;
     name: string;
   }>;
+  cameras: Array<{
+    id: string;
+    x: number;
+    y: number;
+    baseAngle: number;
+  }>;
   pings: Array<{ x: number; y: number; type: "danger" | "go" | "item"; createdAt: number }>;
   exitX: number;
   exitY: number;

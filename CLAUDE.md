@@ -54,6 +54,9 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Milestone 8b — Visual Polish & Sprite System — procedural sprites for Runner/Guard/Items/Tiles, tile caching, walk animations, fog wobble, dust particles, scanline overlay, patrol route visualization
 - **Completed:** Integration Review — all M7/M8 modules integrated, build passes, lint clean, end-to-end wiring verified
 - **Completed:** Sound Effects & Ambient Audio — procedural Web Audio API sound engine, footsteps, guard alerts, item pickup jingle, ambient hum, countdown ticks, game over fanfares, mute button
-- **In Progress:** Controls Tutorial & Onboarding Overlay — role-specific controls during planning phase, in-game help popup
+- **Completed:** Controls Tutorial & Onboarding Overlay — role-specific controls during planning phase, in-game help popup (H/? toggle)
+- **In Progress:** Functional Security Cameras — sweeping vision cones, camera detection alerting nearest guard, Whisper/Runner cone rendering
+- **Queued:** Noise-Based Guard Detection — running creates footstep noise that alerts nearby guards, crouching is silent
+- **Queued:** Player Disconnect Handling — heartbeat-based presence detection, grace period reconnection, clean game ending on disconnect
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

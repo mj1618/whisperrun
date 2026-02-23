@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { generateMap } from "@/game/map-generator";
+import { facingToAngle } from "@/game/guard-ai";
 import InviteLink from "./InviteLink";
 
 type Role = "runner" | "whisper";
@@ -44,6 +45,14 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
     // Generate map from seed and pass entity positions to the server
     try {
       const map = generateMap(room!.mapSeed);
+      const cameras = map.entities
+        .filter((e) => e.type === "camera")
+        .map((e) => ({
+          id: e.id ?? `camera-${e.x}-${e.y}`,
+          x: e.x,
+          y: e.y,
+          baseAngle: facingToAngle(e.facing),
+        }));
       await startGame({
         roomCode,
         sessionId,
@@ -52,6 +61,7 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
         items: [{ id: "item-1", x: map.targetItem.x, y: map.targetItem.y, name: map.targetItem.name }],
         exitX: map.exitPos.x,
         exitY: map.exitPos.y,
+        cameras,
       });
     } catch {
       // Game may have already been started by the other player — ignore

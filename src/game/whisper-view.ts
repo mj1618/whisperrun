@@ -9,6 +9,7 @@ import { TileType } from "@/game/map";
 import { LocalGameState } from "@/game/game-state";
 import { TILE_SIZE } from "@/engine/renderer";
 import { getPingColor, PING_DURATION_MS } from "@/game/ping-system";
+import { updateCameraAngle, CAMERA_RANGE, CAMERA_FOV } from "@/game/guard-ai";
 
 // Blueprint color palette
 const BP_FLOOR = "#141e30";
@@ -280,6 +281,31 @@ export function renderWhisperEntities(
     }
   }
 
+  // -- Cameras --
+  if (gameState.cameras && gameState.cameras.length > 0) {
+    const elapsedSec = gameState.heistStartTime
+      ? (Date.now() - gameState.heistStartTime) / 1000
+      : 0; // During planning, show static cone at base angle
+    for (const cam of gameState.cameras) {
+      const cx = cam.x * TILE_SIZE + TILE_SIZE / 2;
+      const cy = cam.y * TILE_SIZE + TILE_SIZE / 2;
+      const angle = updateCameraAngle(cam.baseAngle, elapsedSec);
+
+      // Draw vision cone (cyan/blue, distinct from guard red)
+      drawVisionCone(ctx, cx, cy, angle, CAMERA_RANGE, CAMERA_FOV, "#44AAFF");
+
+      // Camera icon (small circle with lens indicator)
+      ctx.fillStyle = "#44AAFF";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   // -- Runner --
   {
     const rx = runner.x * TILE_SIZE + TILE_SIZE / 2;
@@ -372,7 +398,7 @@ function drawDiamond(
   ctx.stroke();
 }
 
-function drawVisionCone(
+export function drawVisionCone(
   ctx: CanvasRenderingContext2D,
   gx: number,
   gy: number,

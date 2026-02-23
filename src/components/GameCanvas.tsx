@@ -14,7 +14,18 @@ import { GameStateManager, LocalGameState } from "@/game/game-state";
 import { renderFogOfWar, renderPings } from "@/game/runner-view";
 import { renderBlueprintMap, renderWhisperEntities } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
-import { tickGuard, GuardData } from "@/game/guard-ai";
+import {
+  tickGuard,
+  GuardData,
+  canGuardSeeRunner,
+  canGuardHearRunner,
+  canCameraSeeRunner,
+  updateCameraAngle,
+  CAMERA_ALERT_COOLDOWN,
+  CAMERA_RANGE,
+  CAMERA_FOV,
+  NOISE_RADIUS_RUNNING,
+} from "@/game/guard-ai";
 import { EventRecorder, GameEvent } from "@/game/events";
 import {
   initAudio,
@@ -357,6 +368,7 @@ export default function GameCanvas({
     const local: LocalGameState = {
       runner: gameState.runner,
       guards: gameState.guards,
+      cameras: gameState.cameras ?? [],
       items: gameState.items,
       pings: gameState.pings,
       exitX: gameState.exitX,
@@ -496,6 +508,7 @@ export default function GameCanvas({
     const lastNearMissTime: Record<string, number> = {};
     const wasNearGuardWhileCrouching: Record<string, boolean> = {};
     const prevDistToGuard: Record<string, number> = {};
+    const lastCameraAlertTime: Record<string, number> = {};
     let gameEndFired = false;
 
     const update = (dt: number) => {
@@ -624,6 +637,7 @@ export default function GameCanvas({
         }
 
         // Runner movement (only during heist, not hiding)
+        let runnerMoving = false;
         if (state.phase === "heist" && !state.runner.hiding) {
           const crouching =
             input.isKeyDown("ShiftLeft") || input.isKeyDown("ShiftRight");
@@ -655,7 +669,7 @@ export default function GameCanvas({
           setHudCrouchingRef.current(crouching);
 
           // Walk animation tracking
-          const runnerMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01;
+          runnerMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01;
           if (runnerMoving) {
             walkFrameAccumRef.current += dt * 8; // 8 fps walk cycle
             walkFrameRef.current = Math.floor(walkFrameAccumRef.current) % 4;
@@ -688,6 +702,7 @@ export default function GameCanvas({
             y: gsm.localRunnerY,
             crouching: gsm.localCrouching,
             hiding: state.runner.hiding,
+            moving: runnerMoving,
           };
 
           let worstState: string = "patrol";
@@ -746,6 +761,19 @@ export default function GameCanvas({
               if (isAudioReady()) playSuspiciousSound();
             }
 
+            // --- Event recording: noise-triggered suspicion ---
+            if (
+              (oldState === "patrol" || oldState === "returning") &&
+              newState === "suspicious" &&
+              !canGuardSeeRunner(guard, runnerForGuard, map.tiles)
+            ) {
+              recorder.record("noise_alert", {
+                guardId: guard.id,
+                x: gsm.localRunnerX,
+                y: gsm.localRunnerY,
+              });
+            }
+
             // --- Event recording: near-miss detection ---
             const updatedGuard = localGuardsRef.current[i];
             const dist = Math.hypot(updatedGuard.x - gsm.localRunnerX, updatedGuard.y - gsm.localRunnerY);
@@ -795,6 +823,68 @@ export default function GameCanvas({
                 stateTimer: g.stateTimer,
               })),
             });
+          }
+        }
+
+        // Camera detection (Runner client only)
+        if (state.phase === "heist" && state.heistStartTime && guardsInitializedRef.current) {
+          const elapsed = (Date.now() - state.heistStartTime) / 1000;
+          const now = Date.now();
+          const runnerForCamera = {
+            x: gsm.localRunnerX,
+            y: gsm.localRunnerY,
+            crouching: gsm.localCrouching,
+            hiding: state.runner.hiding,
+            moving: runnerMoving,
+          };
+
+          for (const cam of state.cameras) {
+            const currentAngle = updateCameraAngle(cam.baseAngle, elapsed);
+            const sees = canCameraSeeRunner(
+              { x: cam.x, y: cam.y, angle: currentAngle },
+              runnerForCamera,
+              map.tiles
+            );
+
+            if (sees) {
+              const lastAlert = lastCameraAlertTime[cam.id] ?? 0;
+              if (now - lastAlert > CAMERA_ALERT_COOLDOWN) {
+                lastCameraAlertTime[cam.id] = now;
+
+                // Alert nearest guard in patrol or returning state
+                let nearestGuard: GuardData | null = null;
+                let nearestDist = Infinity;
+                for (const guard of localGuardsRef.current) {
+                  if (guard.state === "patrol" || guard.state === "returning") {
+                    const d = Math.hypot(guard.x - cam.x, guard.y - cam.y);
+                    if (d < nearestDist) {
+                      nearestDist = d;
+                      nearestGuard = guard;
+                    }
+                  }
+                }
+
+                if (nearestGuard) {
+                  const idx = localGuardsRef.current.findIndex((g) => g.id === nearestGuard!.id);
+                  if (idx !== -1) {
+                    localGuardsRef.current[idx] = {
+                      ...localGuardsRef.current[idx],
+                      state: "suspicious",
+                      lastKnownX: gsm.localRunnerX,
+                      lastKnownY: gsm.localRunnerY,
+                      stateTimer: now,
+                    };
+                  }
+                }
+
+                // Record event for highlights
+                recorder.record("camera_spotted", {
+                  cameraId: cam.id,
+                  x: gsm.localRunnerX,
+                  y: gsm.localRunnerY,
+                });
+              }
+            }
           }
         }
 
@@ -854,6 +944,41 @@ export default function GameCanvas({
         for (const guard of guardsToRender) {
           const gWalkFrame = guardWalkFrameRef.current[guard.id] ?? 0;
           renderer.drawGuard(guard.x, guard.y, guard.angle, guard.state, gWalkFrame, timeRef.current);
+        }
+
+        // Camera vision cones (rendered within fog-of-war visibility)
+        if (state.cameras && state.heistStartTime) {
+          const elapsedSec = (Date.now() - state.heistStartTime) / 1000;
+          const runnerX_ = gsm.localRunnerX;
+          const runnerY_ = gsm.localRunnerY;
+          const fogRadius = (gsm.localCrouching ? CROUCH_VIS_RADIUS : WALK_VIS_RADIUS) / TILE_SIZE;
+
+          for (const cam of state.cameras) {
+            const distToRunner = Math.hypot(cam.x - runnerX_, cam.y - runnerY_);
+            if (distToRunner <= fogRadius) {
+              const camScreen = camera.worldToScreen(
+                cam.x * TILE_SIZE + TILE_SIZE / 2,
+                cam.y * TILE_SIZE + TILE_SIZE / 2
+              );
+              const currentAngle = updateCameraAngle(cam.baseAngle, elapsedSec);
+              const rangePixels = CAMERA_RANGE * TILE_SIZE;
+              const halfFovRad = ((CAMERA_FOV * Math.PI) / 180) / 2;
+
+              ctx.save();
+              ctx.globalAlpha = 0.12;
+              ctx.fillStyle = "#FFAA33";
+              ctx.beginPath();
+              ctx.moveTo(camScreen.x, camScreen.y);
+              ctx.arc(camScreen.x, camScreen.y, rangePixels, currentAngle - halfFovRad, currentAngle + halfFovRad);
+              ctx.closePath();
+              ctx.fill();
+              ctx.globalAlpha = 0.25;
+              ctx.strokeStyle = "#FFAA33";
+              ctx.lineWidth = 1;
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
         }
 
         const runnerX = gsm.localRunnerX;

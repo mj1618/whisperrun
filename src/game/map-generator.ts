@@ -9,6 +9,7 @@ export interface MapEntity {
   y: number;
   id?: string;
   name?: string;
+  facing?: "up" | "down" | "left" | "right";
 }
 
 export interface GuardPatrol {
@@ -292,7 +293,7 @@ function tryGenerate(seed: number, skipValidation = false): GeneratedMap | null 
       const x = slot.tileX + cs.x;
       const y = slot.tileY + cs.y;
       if (tiles[y][x] === TileType.Camera) {
-        entities.push({ type: "camera", x, y });
+        entities.push({ type: "camera", x, y, id: `camera-${cameraCount}`, facing: cs.facing });
         cameraCount++;
       }
     }

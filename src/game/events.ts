@@ -8,6 +8,8 @@ export type GameEventType =
   | "hide_escape"
   | "ping_sent"
   | "crouching_sneak"
+  | "camera_spotted"
+  | "noise_alert"
   | "escape"
   | "caught"
   | "timeout";
@@ -17,6 +19,7 @@ export interface GameEvent {
   timestamp: number; // ms since heist start
   data?: {
     guardId?: string;
+    cameraId?: string;
     x?: number;
     y?: number;
     itemName?: string;
