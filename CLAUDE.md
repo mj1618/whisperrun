@@ -44,5 +44,9 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 ## Current Status
 
 - **Completed:** Milestone 1 — Project Scaffolding & Core Engine
+- **Completed:** Milestone 2 — Networking & Room System
+- **Completed:** Milestone 3 — Runner Gameplay
+- **Completed:** Milestone 4 — Whisper Gameplay
+- **In Progress:** Milestone 5 — Guard AI & Detection
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

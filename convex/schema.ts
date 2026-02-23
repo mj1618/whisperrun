@@ -47,6 +47,9 @@ export default defineSchema({
           v.literal("returning")
         ),
         targetWaypoint: v.number(),
+        lastKnownX: v.optional(v.number()),
+        lastKnownY: v.optional(v.number()),
+        stateTimer: v.optional(v.number()),
       })
     ),
     pings: v.array(
@@ -76,8 +79,10 @@ export default defineSchema({
       v.literal("planning"),
       v.literal("heist"),
       v.literal("escaped"),
-      v.literal("caught")
+      v.literal("caught"),
+      v.literal("timeout")
     ),
     startTime: v.number(),
+    heistStartTime: v.optional(v.number()),
   }).index("by_roomId", ["roomId"]),
 });
