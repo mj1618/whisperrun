@@ -159,15 +159,6 @@ export class Renderer {
     drawItemSprite(this.ctx, screen.x, screen.y, { time, pickedUp });
   }
 
-  /** Draw the exit (now handled in drawTileMap, kept for explicit overlays) */
-  drawExit(worldX: number, worldY: number, time: number) {
-    const screen = this.camera.worldToScreen(
-      worldX * TILE_SIZE,
-      worldY * TILE_SIZE
-    );
-    drawExitTile(this.ctx, screen.x, screen.y, time);
-  }
-
   /** Draw a guard as a procedural sprite */
   drawGuard(
     worldX: number,
