@@ -386,6 +386,16 @@ export const startGame = mutation({
       x: v.number(),
       y: v.number(),
     }))),
+    lasers: v.optional(v.array(v.object({
+      id: v.string(),
+      x1: v.number(),
+      y1: v.number(),
+      x2: v.number(),
+      y2: v.number(),
+      onDurationMs: v.number(),
+      offDurationMs: v.number(),
+      phaseOffsetMs: v.number(),
+    }))),
   },
   handler: async (ctx, args) => {
     const room = await ctx.db
@@ -428,6 +438,7 @@ export const startGame = mutation({
     const exitY = args.exitY ?? 14;
     const cameraData = args.cameras ?? [];
     const doorData = (args.doors ?? []).map((d) => ({ x: d.x, y: d.y, open: false }));
+    const laserData = args.lasers ?? [];
 
     // Basic bounds validation — map is up to ~57x35 tiles (hard mode 5x3 grid)
     const MAX_COORD = 60;
@@ -438,6 +449,7 @@ export const startGame = mutation({
       ...itemData.map((i) => ({ x: i.x, y: i.y })),
       ...cameraData.map((c) => ({ x: c.x, y: c.y })),
       ...doorData.map((d) => ({ x: d.x, y: d.y })),
+      ...laserData.flatMap((l) => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]),
     ];
     for (const pos of allPositions) {
       if (pos.x < 0 || pos.x > MAX_COORD || pos.y < 0 || pos.y > MAX_COORD) {
@@ -467,6 +479,7 @@ export const startGame = mutation({
       })),
       cameras: cameraData,
       doors: doorData,
+      lasers: laserData,
       exitX,
       exitY,
       pings: [],

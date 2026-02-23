@@ -11,20 +11,24 @@ import { InputHandler } from "@/engine/input";
 import { TouchInputManager, isTouchDevice } from "@/engine/touch-input";
 import { TouchControls } from "@/components/TouchControls";
 import { isWalkable, isWalkableWithDoors, getMapWidth, getMapHeight, TileType } from "@/game/map";
+import { isLaserActive, isRunnerInLaser } from "@/game/lasers";
 import { generateMap, GeneratedMap } from "@/game/map-generator";
 import { GameStateManager, LocalGameState } from "@/game/game-state";
-import { renderFogOfWar, renderPings, renderPathForRunner } from "@/game/runner-view";
-import { renderBlueprintMap, renderWhisperEntities, renderPaths, renderPathPreview } from "@/game/whisper-view";
+import { renderFogOfWar, renderPings, renderPathForRunner, renderEscalationWaves } from "@/game/runner-view";
+import { renderBlueprintMap, renderWhisperEntities, renderPaths, renderPathPreview, renderEscalationLines } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
 import {
   tickGuard,
   GuardData,
+  GuardState,
   DoorState,
   GuardDifficultyConfig,
+  EscalationEvent,
   canGuardSeeRunner,
   canCameraSeeRunner,
   updateCameraAngle,
   clearGuardPaths,
+  processAlertEscalation,
   CAMERA_ALERT_COOLDOWN,
   CAMERA_FOV,
   NOISE_RADIUS_RUNNING,
@@ -51,6 +55,8 @@ import {
   playDoorOpen,
   playDoorClose,
   playQuickCommSound,
+  playLaserAlarm,
+  playRadioChatter,
 } from "@/engine/audio";
 import HUD from "@/components/HUD";
 import { QUICK_COMM_MESSAGES, QUICK_COMM_COOLDOWN_MS } from "@/game/quick-comms";
@@ -523,6 +529,7 @@ export default function GameCanvas({
       guards: gameState.guards,
       cameras: gameState.cameras ?? [],
       doors: gameState.doors ?? [],
+      lasers: gameState.lasers ?? [],
       items: gameState.items,
       pings: gameState.pings,
       paths: gameState.paths ?? [],
@@ -771,7 +778,13 @@ export default function GameCanvas({
     const wasNearGuardWhileCrouching: Record<string, boolean> = {};
     const prevDistToGuard: Record<string, number> = {};
     const lastCameraAlertTime: Record<string, number> = {};
+    let lastLaserTripTime = 0;
+    const LASER_TRIP_COOLDOWN = 4000;
     let gameEndFired = false;
+
+    // Guard alert escalation state
+    const escalationCooldowns = new Map<string, number>();
+    const activeEscalationEvents: Array<EscalationEvent & { fadeUntil: number }> = [];
 
     const update = (dt: number) => {
       input.update();
@@ -1001,6 +1014,12 @@ export default function GameCanvas({
             moving: runnerMoving,
           };
 
+          // Save previous guard states for escalation detection
+          const previousGuardStates = new Map<string, GuardState>();
+          for (const g of localGuardsRef.current) {
+            previousGuardStates.set(g.id, g.state);
+          }
+
           let worstState: string = "patrol";
           for (let i = 0; i < localGuardsRef.current.length; i++) {
             const guard = localGuardsRef.current[i];
@@ -1101,6 +1120,46 @@ export default function GameCanvas({
             if (gs === "alert") worstState = "alert";
             else if (gs === "suspicious" && worstState !== "alert") worstState = "suspicious";
           }
+
+          // --- Alert Escalation: radio chatter between guards ---
+          const alertRadius = diffConfigRef.current.guardAlertRadius;
+          if (alertRadius > 0) {
+            const escalations = processAlertEscalation(
+              localGuardsRef.current,
+              previousGuardStates,
+              localGuardsRef.current,
+              now,
+              escalationCooldowns,
+              alertRadius
+            );
+
+            for (const esc of escalations) {
+              recorder.record("guard_escalation", {
+                guardId: esc.sourceGuardId,
+                x: esc.alertX,
+                y: esc.alertY,
+              });
+              activeEscalationEvents.push({ ...esc, fadeUntil: now + 1500 });
+              if (isAudioReady()) playRadioChatter();
+              if (isAudioReady()) playSuspiciousSound();
+            }
+
+            // Re-check worst state after escalation (guards may have become suspicious)
+            if (escalations.length > 0) {
+              for (const g of localGuardsRef.current) {
+                if (g.state === "alert") worstState = "alert";
+                else if (g.state === "suspicious" && worstState !== "alert") worstState = "suspicious";
+              }
+            }
+          }
+
+          // Clean up expired escalation events
+          for (let i = activeEscalationEvents.length - 1; i >= 0; i--) {
+            if (now >= activeEscalationEvents[i].fadeUntil) {
+              activeEscalationEvents.splice(i, 1);
+            }
+          }
+
           setGuardAlertStateRef.current(worstState);
 
           // Throttled send to server
@@ -1185,6 +1244,57 @@ export default function GameCanvas({
                   y: gsm.localRunnerY,
                 });
               }
+            }
+          }
+        }
+
+        // Laser tripwire detection (Runner client only)
+        if (state.phase === "heist" && state.heistStartTime && guardsInitializedRef.current) {
+          const elapsedMs = Date.now() - state.heistStartTime;
+          const now = Date.now();
+
+          if (!state.runner.hiding && now - lastLaserTripTime > LASER_TRIP_COOLDOWN) {
+            for (const laser of state.lasers) {
+              if (!isLaserActive(laser, elapsedMs)) continue;
+              if (!isRunnerInLaser(laser, gsm.localRunnerX, gsm.localRunnerY)) continue;
+
+              lastLaserTripTime = now;
+
+              // Alert nearest idle guard (same pattern as camera detection)
+              let nearestGuard: GuardData | null = null;
+              let nearestDist = Infinity;
+              const laserMidX = (laser.x1 + laser.x2) / 2;
+              const laserMidY = (laser.y1 + laser.y2) / 2;
+              for (const guard of localGuardsRef.current) {
+                if (guard.state === "patrol" || guard.state === "returning") {
+                  const d = Math.hypot(guard.x - laserMidX, guard.y - laserMidY);
+                  if (d < nearestDist) {
+                    nearestDist = d;
+                    nearestGuard = guard;
+                  }
+                }
+              }
+
+              if (nearestGuard) {
+                const idx = localGuardsRef.current.findIndex((g) => g.id === nearestGuard!.id);
+                if (idx !== -1) {
+                  localGuardsRef.current[idx] = {
+                    ...localGuardsRef.current[idx],
+                    state: "suspicious",
+                    lastKnownX: gsm.localRunnerX,
+                    lastKnownY: gsm.localRunnerY,
+                    stateTimer: now,
+                  };
+                }
+              }
+
+              recorder.record("laser_tripped", {
+                x: gsm.localRunnerX,
+                y: gsm.localRunnerY,
+              });
+
+              if (isAudioReady()) playLaserAlarm();
+              break; // Only trip one laser per frame
             }
           }
         }
@@ -1297,6 +1407,67 @@ export default function GameCanvas({
           }
         }
 
+        // Laser tripwires (rendered within fog-of-war visibility)
+        if (state.lasers.length > 0) {
+          const laserElapsedMs = state.heistStartTime
+            ? Date.now() - state.heistStartTime
+            : 0;
+          const runnerX_ = gsm.localRunnerX;
+          const runnerY_ = gsm.localRunnerY;
+          const fogRadius = (gsm.localCrouching ? CROUCH_VIS_RADIUS : WALK_VIS_RADIUS) / TILE_SIZE;
+
+          for (const laser of state.lasers) {
+            // Check if either emitter is within fog-of-war visibility
+            const d1 = Math.hypot(laser.x1 - runnerX_, laser.y1 - runnerY_);
+            const d2 = Math.hypot(laser.x2 - runnerX_, laser.y2 - runnerY_);
+            if (d1 > fogRadius && d2 > fogRadius) continue;
+
+            const active = state.heistStartTime ? isLaserActive(laser, laserElapsedMs) : true;
+
+            const sx1 = camera.worldToScreen(
+              (laser.x1 + 0.5) * TILE_SIZE,
+              (laser.y1 + 0.5) * TILE_SIZE
+            );
+            const sx2 = camera.worldToScreen(
+              (laser.x2 + 0.5) * TILE_SIZE,
+              (laser.y2 + 0.5) * TILE_SIZE
+            );
+
+            if (active) {
+              // Glow layer (wider, translucent)
+              ctx.save();
+              ctx.strokeStyle = "rgba(255, 40, 40, 0.3)";
+              ctx.lineWidth = 8;
+              ctx.beginPath();
+              ctx.moveTo(sx1.x, sx1.y);
+              ctx.lineTo(sx2.x, sx2.y);
+              ctx.stroke();
+
+              // Core beam (thin, bright, pulsing)
+              const pulse = 0.7 + 0.3 * Math.sin(laserElapsedMs * 0.005);
+              ctx.strokeStyle = `rgba(255, 0, 0, ${pulse})`;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(sx1.x, sx1.y);
+              ctx.lineTo(sx2.x, sx2.y);
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Emitter boxes on both ends
+            const dotColor = active ? "#FF0000" : "#660000";
+            const boxSize = 6;
+            for (const pt of [sx1, sx2]) {
+              ctx.fillStyle = "#333";
+              ctx.fillRect(pt.x - boxSize / 2, pt.y - boxSize / 2, boxSize, boxSize);
+              ctx.fillStyle = dotColor;
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+
         const runnerX = gsm.localRunnerX;
         const runnerY = gsm.localRunnerY;
         const crouching = gsm.localCrouching;
@@ -1333,6 +1504,22 @@ export default function GameCanvas({
             ctx.stroke();
           }
           ctx.restore();
+        }
+
+        // Escalation wave visuals (rendered BELOW fog so only visible in Runner's radius)
+        if (activeEscalationEvents.length > 0) {
+          const guardsForVis = guardsInitializedRef.current ? localGuardsRef.current : state.guards;
+          const fogRadiusTiles = (crouching ? CROUCH_VIS_RADIUS : WALK_VIS_RADIUS) / TILE_SIZE;
+          renderEscalationWaves(
+            ctx,
+            activeEscalationEvents,
+            guardsForVis,
+            Date.now(),
+            camera,
+            runnerX,
+            runnerY,
+            fogRadiusTiles
+          );
         }
 
         // Whisper-drawn paths (rendered BELOW fog so only visible in Runner's radius)
@@ -1378,6 +1565,70 @@ export default function GameCanvas({
           cameraRange: diffConfigRef.current.cameraRange,
           cameraSweepSpeed: diffConfigRef.current.cameraSweepSpeed,
         }, runnerColorsRef.current.body);
+
+        // Laser tripwires (Whisper sees all, always visible)
+        if (state.lasers.length > 0) {
+          const laserElapsedMs = state.heistStartTime
+            ? Date.now() - state.heistStartTime
+            : 0;
+
+          for (const laser of state.lasers) {
+            const active = state.heistStartTime ? isLaserActive(laser, laserElapsedMs) : true;
+
+            const lx1 = (laser.x1 + 0.5) * TILE_SIZE;
+            const ly1 = (laser.y1 + 0.5) * TILE_SIZE;
+            const lx2 = (laser.x2 + 0.5) * TILE_SIZE;
+            const ly2 = (laser.y2 + 0.5) * TILE_SIZE;
+
+            if (active) {
+              // Active beam: bright red with glow
+              ctx.save();
+              ctx.strokeStyle = "rgba(255, 40, 40, 0.3)";
+              ctx.lineWidth = 6;
+              ctx.beginPath();
+              ctx.moveTo(lx1, ly1);
+              ctx.lineTo(lx2, ly2);
+              ctx.stroke();
+
+              const pulse = 0.7 + 0.3 * Math.sin(laserElapsedMs * 0.005);
+              ctx.strokeStyle = `rgba(255, 0, 0, ${pulse})`;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(lx1, ly1);
+              ctx.lineTo(lx2, ly2);
+              ctx.stroke();
+              ctx.restore();
+            } else {
+              // Inactive beam: dashed dim red line
+              ctx.save();
+              ctx.setLineDash([4, 6]);
+              ctx.strokeStyle = "rgba(255, 60, 60, 0.25)";
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(lx1, ly1);
+              ctx.lineTo(lx2, ly2);
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Emitter boxes on both ends
+            const dotColor = active ? "#FF0000" : "#660000";
+            const boxSize = 6;
+            for (const [px, py] of [[lx1, ly1], [lx2, ly2]]) {
+              ctx.fillStyle = "#333";
+              ctx.fillRect(px - boxSize / 2, py - boxSize / 2, boxSize, boxSize);
+              ctx.fillStyle = dotColor;
+              ctx.beginPath();
+              ctx.arc(px, py, 2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+
+        // Escalation communication lines between guards
+        if (activeEscalationEvents.length > 0) {
+          renderEscalationLines(ctx, activeEscalationEvents, state.guards, Date.now());
+        }
 
         // Render synced paths
         if (state.paths.length > 0) {

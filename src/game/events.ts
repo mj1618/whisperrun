@@ -10,6 +10,8 @@ export type GameEventType =
   | "crouching_sneak"
   | "camera_spotted"
   | "noise_alert"
+  | "laser_tripped"
+  | "guard_escalation"
   | "quick_comm"
   | "escape"
   | "caught"

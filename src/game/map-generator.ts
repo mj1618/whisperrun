@@ -3,6 +3,7 @@ import { RoomChunk, ROOM_CHUNKS, LOBBY_CHUNK } from "@/game/room-chunks";
 import { SeededRandom } from "@/lib/random";
 import { TARGET_ITEMS } from "@/game/target-items";
 import { DifficultyLevel, getDifficultyConfig, DifficultyConfig } from "@/game/difficulty";
+import { LaserTripwire } from "@/game/lasers";
 
 export interface MapEntity {
   type: "guard" | "item" | "camera" | "hideSpot" | "exit" | "runnerSpawn";
@@ -26,6 +27,7 @@ export interface GeneratedMap {
   height: number;
   entities: MapEntity[];
   guardPatrols: GuardPatrol[];
+  lasers: LaserTripwire[];
   runnerSpawn: { x: number; y: number };
   exitPos: { x: number; y: number };
   targetItem: { x: number; y: number; name: string };
@@ -298,7 +300,10 @@ function tryGenerate(seed: number, config: DifficultyConfig, skipValidation = fa
     }
   }
 
-  // Step 7: Validate connectivity
+  // Step 7: Place laser tripwires in corridors/doorways
+  const lasers = placeLasers(rng, tiles, config, MAP_WIDTH, MAP_HEIGHT);
+
+  // Step 8: Validate connectivity
   if (!skipValidation) {
     const reachable = floodFill(tiles, runnerSpawn.x, runnerSpawn.y);
 
@@ -322,6 +327,7 @@ function tryGenerate(seed: number, config: DifficultyConfig, skipValidation = fa
     height: MAP_HEIGHT,
     entities,
     guardPatrols,
+    lasers,
     runnerSpawn,
     exitPos,
     targetItem,
@@ -737,6 +743,130 @@ function findFloorTileNear(tiles: TileType[][], x: number, y: number): { x: numb
 
   // Last resort — should not happen with valid maps
   return { x, y };
+}
+
+/**
+ * Find corridor/doorway locations suitable for laser tripwires and place them.
+ * Lasers are axis-aligned beams between two wall tiles across a narrow passage.
+ */
+function placeLasers(
+  rng: SeededRandom,
+  tiles: TileType[][],
+  config: DifficultyConfig,
+  mapWidth: number,
+  mapHeight: number,
+): LaserTripwire[] {
+  if (config.maxLasers <= 0) return [];
+
+  interface LaserCandidate {
+    x1: number; y1: number;
+    x2: number; y2: number;
+  }
+
+  const candidates: LaserCandidate[] = [];
+
+  // Scan for horizontal laser candidates: wall tiles on top and bottom
+  // with 1-2 floor tiles between them (a corridor running left-right).
+  for (let row = 1; row < mapHeight - 1; row++) {
+    for (let col = 0; col < mapWidth; col++) {
+      // Check vertical beam across a horizontal corridor (wall above and below floor)
+      if (
+        tiles[row][col] === TileType.Floor ||
+        tiles[row][col] === TileType.Door
+      ) {
+        // Look for wall above and below
+        let topWall = -1;
+        let bottomWall = -1;
+        // Search upward for wall
+        for (let r = row - 1; r >= Math.max(0, row - 3); r--) {
+          if (tiles[r][col] === TileType.Wall) { topWall = r; break; }
+          if (tiles[r][col] !== TileType.Floor && tiles[r][col] !== TileType.Door) break;
+        }
+        // Search downward for wall
+        for (let r = row + 1; r < Math.min(mapHeight, row + 4); r++) {
+          if (tiles[r][col] === TileType.Wall) { bottomWall = r; break; }
+          if (tiles[r][col] !== TileType.Floor && tiles[r][col] !== TileType.Door) break;
+        }
+
+        if (topWall !== -1 && bottomWall !== -1) {
+          const span = bottomWall - topWall - 1;
+          // Only 1-2 tiles wide corridors
+          if (span >= 1 && span <= 2) {
+            candidates.push({ x1: col, y1: topWall, x2: col, y2: bottomWall });
+          }
+        }
+      }
+
+      // Check horizontal beam across a vertical corridor (wall left and right of floor)
+      if (
+        tiles[row][col] === TileType.Floor ||
+        tiles[row][col] === TileType.Door
+      ) {
+        let leftWall = -1;
+        let rightWall = -1;
+        for (let c = col - 1; c >= Math.max(0, col - 3); c--) {
+          if (tiles[row][c] === TileType.Wall) { leftWall = c; break; }
+          if (tiles[row][c] !== TileType.Floor && tiles[row][c] !== TileType.Door) break;
+        }
+        for (let c = col + 1; c < Math.min(mapWidth, col + 4); c++) {
+          if (tiles[row][c] === TileType.Wall) { rightWall = c; break; }
+          if (tiles[row][c] !== TileType.Floor && tiles[row][c] !== TileType.Door) break;
+        }
+
+        if (leftWall !== -1 && rightWall !== -1) {
+          const span = rightWall - leftWall - 1;
+          if (span >= 1 && span <= 2) {
+            candidates.push({ x1: leftWall, y1: row, x2: rightWall, y2: row });
+          }
+        }
+      }
+    }
+  }
+
+  // Deduplicate candidates (same wall pair)
+  const uniqueSet = new Set<string>();
+  const uniqueCandidates: LaserCandidate[] = [];
+  for (const c of candidates) {
+    // Normalize key so (x1,y1)-(x2,y2) and reverse are the same
+    const k1 = `${Math.min(c.x1, c.x2)},${Math.min(c.y1, c.y2)}-${Math.max(c.x1, c.x2)},${Math.max(c.y1, c.y2)}`;
+    if (!uniqueSet.has(k1)) {
+      uniqueSet.add(k1);
+      uniqueCandidates.push(c);
+    }
+  }
+
+  // Shuffle and pick up to maxLasers, ensuring minimum distance between them
+  rng.shuffle(uniqueCandidates);
+
+  const placed: LaserTripwire[] = [];
+  const cycleLength = config.laserOnMs + config.laserOffMs;
+
+  for (const cand of uniqueCandidates) {
+    if (placed.length >= config.maxLasers) break;
+
+    // Ensure minimum distance (5 tiles) from other placed lasers
+    const tooClose = placed.some((l) => {
+      const midX = (cand.x1 + cand.x2) / 2;
+      const midY = (cand.y1 + cand.y2) / 2;
+      const lMidX = (l.x1 + l.x2) / 2;
+      const lMidY = (l.y1 + l.y2) / 2;
+      return Math.hypot(midX - lMidX, midY - lMidY) < 5;
+    });
+    if (tooClose) continue;
+
+    placed.push({
+      id: `laser-${placed.length}`,
+      x1: cand.x1,
+      y1: cand.y1,
+      x2: cand.x2,
+      y2: cand.y2,
+      onDurationMs: config.laserOnMs,
+      offDurationMs: config.laserOffMs,
+      phaseOffsetMs: rng.nextInt(0, cycleLength),
+    });
+  }
+
+  return placed;
 }
 
 function floodFill(tiles: TileType[][], startX: number, startY: number): Set<string> {

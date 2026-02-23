@@ -31,6 +31,16 @@ export interface LocalGameState {
     baseAngle: number;
   }>;
   doors: Array<{ x: number; y: number; open: boolean }>;
+  lasers: Array<{
+    id: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    onDurationMs: number;
+    offDurationMs: number;
+    phaseOffsetMs: number;
+  }>;
   pings: Array<{ x: number; y: number; type: "danger" | "go" | "item"; createdAt: number }>;
   paths: Array<{ points: Array<{ x: number; y: number }>; createdAt: number }>;
   exitX: number;

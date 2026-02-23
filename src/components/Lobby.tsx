@@ -104,6 +104,16 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
         exitY: map.exitPos.y,
         cameras,
         doors,
+        lasers: map.lasers.map((l) => ({
+          id: l.id,
+          x1: l.x1,
+          y1: l.y1,
+          x2: l.x2,
+          y2: l.y2,
+          onDurationMs: l.onDurationMs,
+          offDurationMs: l.offDurationMs,
+          phaseOffsetMs: l.phaseOffsetMs,
+        })),
       });
     } catch {
       // Game may have already been started by the other player — ignore

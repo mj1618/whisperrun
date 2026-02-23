@@ -23,7 +23,9 @@ export function calculateScore(
   const nearMissCount = events.filter((e) => e.type === "near_miss").length;
   const sneakCount = events.filter((e) => e.type === "crouching_sneak").length;
   const hideEscapeCount = events.filter((e) => e.type === "hide_escape").length;
-  const panicMoments = alertCount + nearMissCount;
+  const laserTripCount = events.filter((e) => e.type === "laser_tripped").length;
+  const escalationCount = events.filter((e) => e.type === "guard_escalation").length;
+  const panicMoments = alertCount + nearMissCount + laserTripCount + escalationCount;
 
   const nearMissDistances = events
     .filter((e) => e.type === "near_miss" && e.data?.distance != null)
@@ -38,10 +40,12 @@ export function calculateScore(
     timeBonus = Math.max(0, Math.round(1000 * (1 - seconds / 180)));
   }
 
-  // Stealth bonus: starts at 500, lose 100 per alert, lose 50 per near-miss
+  // Stealth bonus: starts at 500, lose 100 per alert, lose 50 per near-miss, lose 75 per laser trip
   let stealthBonus = 500;
   stealthBonus -= alertCount * 100;
   stealthBonus -= nearMissCount * 50;
+  stealthBonus -= laserTripCount * 75;
+  stealthBonus -= escalationCount * 50;
   stealthBonus = Math.max(0, stealthBonus);
   if (outcome !== "escaped") stealthBonus = 0;
 
@@ -56,8 +60,8 @@ export function calculateScore(
   // Stealth rating (1-3 stars)
   let stealthRating = 0;
   if (outcome === "escaped") {
-    if (heistDurationMs < 60_000 && alertCount === 0) stealthRating = 3;
-    else if (heistDurationMs < 120_000 && alertCount <= 1) stealthRating = 2;
+    if (heistDurationMs < 60_000 && alertCount === 0 && laserTripCount === 0) stealthRating = 3;
+    else if (heistDurationMs < 120_000 && alertCount <= 1 && laserTripCount <= 1) stealthRating = 2;
     else stealthRating = 1;
   }
 

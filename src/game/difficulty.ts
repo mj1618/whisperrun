@@ -22,6 +22,12 @@ export interface DifficultyConfig {
   guardCrouchRange: number;
   cameraRange: number;
   cameraSweepSpeed: number;
+  // Laser tripwires
+  maxLasers: number;
+  laserOnMs: number;
+  laserOffMs: number;
+  // Guard alert escalation
+  guardAlertRadius: number;
 }
 
 export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
@@ -43,6 +49,10 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     guardCrouchRange: 2,
     cameraRange: 5,
     cameraSweepSpeed: 0.5,
+    maxLasers: 0,
+    laserOnMs: 3000,
+    laserOffMs: 3000,
+    guardAlertRadius: 0,
   },
   standard: {
     label: "Standard",
@@ -62,6 +72,10 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     guardCrouchRange: 3,
     cameraRange: 7,
     cameraSweepSpeed: 0.8,
+    maxLasers: 2,
+    laserOnMs: 3000,
+    laserOffMs: 2500,
+    guardAlertRadius: 8,
   },
   hard: {
     label: "Hard",
@@ -81,6 +95,10 @@ export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
     guardCrouchRange: 4,
     cameraRange: 8,
     cameraSweepSpeed: 1.0,
+    maxLasers: 3,
+    laserOnMs: 3500,
+    laserOffMs: 1500,
+    guardAlertRadius: 12,
   },
 };
 

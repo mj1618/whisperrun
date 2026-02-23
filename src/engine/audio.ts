@@ -317,6 +317,74 @@ export function stopAmbientLoop(): void {
   ambientGain = null;
 }
 
+/** Laser tripwire alarm — sharp electronic zap-beep */
+export function playLaserAlarm(): void {
+  if (!audioCtx || !masterGain) return;
+  const now = audioCtx.currentTime;
+
+  // Sharp zap: sawtooth sweep down
+  const zap = audioCtx.createOscillator();
+  zap.type = "sawtooth";
+  zap.frequency.setValueAtTime(800, now);
+  zap.frequency.exponentialRampToValueAtTime(200, now + 0.15);
+
+  const zapGain = audioCtx.createGain();
+  zapGain.gain.setValueAtTime(0.3, now);
+  zapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+
+  zap.connect(zapGain).connect(masterGain);
+  zap.start(now);
+  zap.stop(now + 0.21);
+
+  // Follow-up beep
+  const beep = audioCtx.createOscillator();
+  beep.type = "sine";
+  beep.frequency.setValueAtTime(1200, now + 0.1);
+
+  const beepGain = audioCtx.createGain();
+  beepGain.gain.setValueAtTime(0.2, now + 0.1);
+  beepGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+  beep.connect(beepGain).connect(masterGain);
+  beep.start(now + 0.1);
+  beep.stop(now + 0.31);
+}
+
+/** Guard alert escalation — walkie-talkie radio chatter */
+export function playRadioChatter(): void {
+  if (!audioCtx || !masterGain) return;
+  const now = audioCtx.currentTime;
+
+  // Static burst (sawtooth sweep down)
+  const static1 = audioCtx.createOscillator();
+  static1.type = "sawtooth";
+  static1.frequency.setValueAtTime(3000, now);
+  static1.frequency.linearRampToValueAtTime(100, now + 0.05);
+
+  const staticGain = audioCtx.createGain();
+  staticGain.gain.setValueAtTime(0.12, now);
+  staticGain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+
+  static1.connect(staticGain).connect(masterGain);
+  static1.start(now);
+  static1.stop(now + 0.09);
+
+  // Walkie-talkie chirp (two quick tones)
+  const chirp = audioCtx.createOscillator();
+  chirp.type = "square";
+  chirp.frequency.setValueAtTime(1400, now + 0.05);
+  chirp.frequency.setValueAtTime(1800, now + 0.12);
+
+  const chirpGain = audioCtx.createGain();
+  chirpGain.gain.setValueAtTime(0.15, now + 0.05);
+  chirpGain.gain.setValueAtTime(0.15, now + 0.12);
+  chirpGain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+
+  chirp.connect(chirpGain).connect(masterGain);
+  chirp.start(now + 0.05);
+  chirp.stop(now + 0.26);
+}
+
 /** Countdown tick — short click for last 10 seconds */
 export function playCountdownTick(): void {
   playTone(1000, 0.02, "sine", 0.1);

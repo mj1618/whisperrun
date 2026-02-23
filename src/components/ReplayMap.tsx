@@ -31,6 +31,7 @@ const CAMERA_COLOR = "#FFAA33";
 const MARKER_ALERT = "#FF4444";
 const MARKER_NEAR_MISS = "#FF8C00";
 const MARKER_ITEM = "#FFD700";
+const MARKER_LASER = "#FF00FF";
 const MARKER_CAUGHT = "#FF2222";
 const MARKER_ESCAPE = "#4CAF50";
 
@@ -46,6 +47,7 @@ function getMarkerColor(type: string): { color: string; radius: number } {
     case "alert": return { color: MARKER_ALERT, radius: 5 };
     case "near_miss": return { color: MARKER_NEAR_MISS, radius: 5 };
     case "item": return { color: MARKER_ITEM, radius: 6 };
+    case "laser": return { color: MARKER_LASER, radius: 5 };
     case "caught": return { color: MARKER_CAUGHT, radius: 7 };
     case "escape": return { color: MARKER_ESCAPE, radius: 7 };
     default: return { color: "#fff", radius: 5 };
@@ -89,6 +91,7 @@ function drawMarker(
   else if (type === "escape") ctx.fillText("\u2713", 0, 0);
   else if (type === "item") ctx.fillText("\u2605", 0, 0.5);
   else if (type === "alert") ctx.fillText("!", 0, 0);
+  else if (type === "laser") ctx.fillText("\u26A1", 0, 0.5);
 
   ctx.restore();
 }
@@ -138,7 +141,7 @@ interface EventMarker {
   x: number;
   y: number;
   t: number;
-  type: "alert" | "near_miss" | "item" | "caught" | "escape";
+  type: "alert" | "near_miss" | "item" | "laser" | "caught" | "escape";
 }
 
 export default function ReplayMap({
@@ -172,6 +175,7 @@ export default function ReplayMap({
       if (event.type === "guard_alert") markerType = "alert";
       else if (event.type === "near_miss") markerType = "near_miss";
       else if (event.type === "item_pickup") markerType = "item";
+      else if (event.type === "laser_tripped") markerType = "laser";
       else if (event.type === "caught") markerType = "caught";
       else if (event.type === "escape") markerType = "escape";
 
