@@ -579,6 +579,7 @@ export default function GameCanvas({
         role={role}
         phase={phase}
         startTime={gameState?.startTime ?? 0}
+        heistStartTime={gameState?.heistStartTime}
         hasItem={gameState?.runner.hasItem ?? false}
         itemName={gameState?.items[0]?.name ?? "Golden Rubber Duck"}
         crouching={hudCrouching}

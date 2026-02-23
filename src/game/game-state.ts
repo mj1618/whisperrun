@@ -11,7 +11,7 @@ export interface LocalGameState {
     x: number;
     y: number;
     angle: number;
-    state: string;
+    state: "patrol" | "suspicious" | "alert" | "returning";
     targetWaypoint: number;
     lastKnownX?: number;
     lastKnownY?: number;
@@ -24,10 +24,10 @@ export interface LocalGameState {
     pickedUp: boolean;
     name: string;
   }>;
-  pings: Array<{ x: number; y: number; type: string; createdAt: number }>;
+  pings: Array<{ x: number; y: number; type: "danger" | "go" | "item"; createdAt: number }>;
   exitX: number;
   exitY: number;
-  phase: string;
+  phase: "planning" | "heist" | "escaped" | "caught" | "timeout";
   startTime: number;
   heistStartTime?: number;
 }

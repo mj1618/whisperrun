@@ -227,9 +227,6 @@ export const startGame = mutation({
           angle: 0,
           state: "patrol",
           targetWaypoint: 0,
-          lastKnownX: undefined,
-          lastKnownY: undefined,
-          stateTimer: undefined,
         },
       ],
       items: [

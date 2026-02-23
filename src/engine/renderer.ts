@@ -150,7 +150,7 @@ export class Renderer {
   }
 
   /** Draw a guard as a red circle with direction indicator and state coloring */
-  drawGuard(worldX: number, worldY: number, angle: number = 0, state: string = "patrol") {
+  drawGuard(worldX: number, worldY: number, angle: number = 0, state: "patrol" | "suspicious" | "alert" | "returning" = "patrol") {
     const screen = this.camera.worldToScreen(
       worldX * TILE_SIZE + TILE_SIZE / 2,
       worldY * TILE_SIZE + TILE_SIZE / 2
