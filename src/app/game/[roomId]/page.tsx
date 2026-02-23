@@ -9,6 +9,7 @@ import { getSessionId } from "@/lib/session";
 import Lobby from "@/components/Lobby";
 import GameCanvas from "@/components/GameCanvas";
 import RoomJoiner from "@/components/RoomJoiner";
+import ResultsScreen from "@/components/ResultsScreen";
 
 function useSessionId(): string | null {
   const [sessionId] = useState(() => {
@@ -24,6 +25,10 @@ export default function GamePage() {
   const sessionId = useSessionId();
 
   const room = useQuery(api.rooms.getRoom, { roomCode });
+  const gameState = useQuery(
+    api.game.getGameState,
+    room?._id ? { roomId: room._id } : "skip"
+  );
 
   // Loading states
   if (!sessionId) {
@@ -85,20 +90,42 @@ export default function GamePage() {
     );
   }
 
-  // Show lobby or game based on room status
+  // Determine current player's role
+  const currentPlayer = room.players.find((p) => p.sessionId === sessionId);
+  const playerRole = (currentPlayer?.role ?? "runner") as "runner" | "whisper";
+
+  // Show lobby when waiting
   if (room.status === "waiting") {
     return <Lobby roomCode={roomCode} sessionId={sessionId} />;
   }
 
-  // Determine current player's role
-  const currentPlayer = room.players.find((p) => p.sessionId === sessionId);
-  const playerRole = currentPlayer?.role ?? "runner";
+  // Finished state — show ResultsScreen
+  if (
+    room.status === "finished" &&
+    gameState &&
+    (gameState.phase === "escaped" ||
+      gameState.phase === "caught" ||
+      gameState.phase === "timeout")
+  ) {
+    return (
+      <ResultsScreen
+        outcome={gameState.phase}
+        heistStartTime={gameState.heistStartTime}
+        itemName={gameState.items[0]?.name ?? "Golden Rubber Duck"}
+        hasItem={gameState.runner.hasItem}
+        roomCode={roomCode}
+        sessionId={sessionId}
+        role={playerRole}
+      />
+    );
+  }
 
+  // Playing state — show game
   return (
     <GameCanvas
       roomId={room._id}
       sessionId={sessionId}
-      role={playerRole as "runner" | "whisper"}
+      role={playerRole}
     />
   );
 }

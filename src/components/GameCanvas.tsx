@@ -2,25 +2,26 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
-import Link from "next/link";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { GameLoop } from "@/engine/loop";
 import { Renderer, TILE_SIZE } from "@/engine/renderer";
 import { Camera } from "@/engine/camera";
 import { InputHandler } from "@/engine/input";
-import { TEST_MAP, isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
+import { FALLBACK_MAP, isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
 import { GameStateManager, LocalGameState } from "@/game/game-state";
 import { renderFogOfWar, renderPings } from "@/game/runner-view";
 import { renderBlueprintMap, renderWhisperEntities } from "@/game/whisper-view";
 import { screenToTileWhisper } from "@/game/ping-system";
-import { tickGuard, GuardData } from "@/game/guard-ai";
+import { tickGuard, GuardData, GuardState } from "@/game/guard-ai";
+import { EventRecorder, GameEvent } from "@/game/events";
 import HUD from "@/components/HUD";
 
 interface GameCanvasProps {
   roomId: Id<"rooms">;
   sessionId: string;
   role: "runner" | "whisper";
+  onGameEnd?: (events: GameEvent[]) => void;
 }
 
 // Movement speeds in tiles/second
@@ -44,7 +45,7 @@ function canMoveTo(x: number, y: number): boolean {
     { col: Math.floor(x - HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
     { col: Math.floor(x + HITBOX_HALF), row: Math.floor(y + HITBOX_HALF) },
   ];
-  return corners.every((c) => isWalkable(TEST_MAP, c.col, c.row));
+  return corners.every((c) => isWalkable(FALLBACK_MAP, c.col, c.row));
 }
 
 function getInteraction(
@@ -77,11 +78,11 @@ function getInteraction(
       const c = tileCol + dc;
       if (
         r >= 0 &&
-        r < TEST_MAP.length &&
+        r < FALLBACK_MAP.length &&
         c >= 0 &&
-        c < (TEST_MAP[0]?.length ?? 0)
+        c < (FALLBACK_MAP[0]?.length ?? 0)
       ) {
-        if (TEST_MAP[r][c] === TileType.HideSpot) {
+        if (FALLBACK_MAP[r][c] === TileType.HideSpot) {
           const dist = Math.hypot(c - x, r - y);
           if (dist < 1.5) return "hide";
         }
@@ -141,10 +142,16 @@ export default function GameCanvas({
   roomId,
   sessionId,
   role,
+  onGameEnd,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameStateManagerRef = useRef(new GameStateManager());
   const timeRef = useRef(0);
+  const eventRecorderRef = useRef(new EventRecorder());
+  const onGameEndRef = useRef(onGameEnd);
+  useEffect(() => {
+    onGameEndRef.current = onGameEnd;
+  }, [onGameEnd]);
 
   // Force periodic re-render for HUD timer
   const [, setTick] = useState(0);
@@ -261,7 +268,7 @@ export default function GameCanvas({
       // Only ping on walkable tiles
       const col = Math.floor(tile.x);
       const row = Math.floor(tile.y);
-      if (!isWalkable(TEST_MAP, col, row)) return;
+      if (!isWalkable(FALLBACK_MAP, col, row)) return;
 
       addPingRef.current({
         roomId,
@@ -301,6 +308,17 @@ export default function GameCanvas({
     let cameraCentered = false;
     let planningAutoStarted = false;
 
+    // Event recording state
+    const recorder = eventRecorderRef.current;
+    let prevPhase: string = "";
+    let prevHasItem = false;
+    let prevHiding = false;
+    let prevGuardStates: Record<string, GuardState> = {};
+    let lastNearMissTime: Record<string, number> = {};
+    let wasNearGuardWhileCrouching: Record<string, boolean> = {};
+    let prevDistToGuard: Record<string, number> = {};
+    let gameEndFired = false;
+
     const update = (dt: number) => {
       input.update();
       timeRef.current += dt;
@@ -308,9 +326,58 @@ export default function GameCanvas({
       const state = gsm.getState();
       if (!state) return;
 
-      // Game over — stop all updates
+      // --- Event recording: phase transitions ---
+      if (state.phase !== prevPhase) {
+        // Start recorder when heist begins
+        if (state.phase === "heist" && prevPhase !== "") {
+          recorder.start(state.heistStartTime ?? Date.now());
+        }
+        // Terminal events
+        if (prevPhase === "heist" && state.phase === "escaped") {
+          recorder.record("escape");
+        }
+        if (prevPhase === "heist" && state.phase === "caught") {
+          recorder.record("caught");
+        }
+        if (prevPhase === "heist" && state.phase === "timeout") {
+          recorder.record("timeout");
+        }
+        prevPhase = state.phase;
+      }
+
+      // --- Event recording: item pickup ---
+      if (state.runner.hasItem && !prevHasItem) {
+        recorder.record("item_pickup", { itemName: state.items[0]?.name });
+      }
+      prevHasItem = state.runner.hasItem;
+
+      // --- Event recording: hide enter / hide escape ---
+      if (state.runner.hiding && !prevHiding) {
+        recorder.record("hide_enter", { x: gsm.localRunnerX, y: gsm.localRunnerY });
+      }
+      if (!state.runner.hiding && prevHiding && role === "runner") {
+        const guards = guardsInitializedRef.current ? localGuardsRef.current : state.guards;
+        const nearbyGuard = guards.find(
+          (g) => Math.hypot(g.x - gsm.localRunnerX, g.y - gsm.localRunnerY) < 4
+        );
+        if (nearbyGuard) {
+          recorder.record("hide_escape", {
+            guardId: nearbyGuard.id,
+            distance: Math.hypot(nearbyGuard.x - gsm.localRunnerX, nearbyGuard.y - gsm.localRunnerY),
+          });
+        }
+      }
+      prevHiding = state.runner.hiding;
+
+      // Game over — fire onGameEnd callback and stop updates
       const isGameOver = state.phase === "escaped" || state.phase === "caught" || state.phase === "timeout";
-      if (isGameOver) return;
+      if (isGameOver) {
+        if (!gameEndFired) {
+          gameEndFired = true;
+          onGameEndRef.current?.(recorder.getEvents());
+        }
+        return;
+      }
 
       // Planning phase auto-transition: Runner client auto-starts heist when countdown ends
       if (state.phase === "planning" && role === "runner" && !planningAutoStarted) {
@@ -410,7 +477,7 @@ export default function GameCanvas({
               localGuardsRef.current[i],
               runnerForGuard,
               dt,
-              TEST_MAP,
+              FALLBACK_MAP,
               now
             );
             localGuardsRef.current[i] = {
@@ -480,7 +547,7 @@ export default function GameCanvas({
       if (role === "runner") {
         // ---- Runner rendering path ----
         renderer.clear();
-        renderer.drawTileMap(TEST_MAP);
+        renderer.drawTileMap(FALLBACK_MAP);
 
         if (!state) return;
 
@@ -524,8 +591,8 @@ export default function GameCanvas({
         if (!state) return;
 
         // Calculate zoom to fit entire map
-        const mapPixelW = getMapWidth(TEST_MAP) * TILE_SIZE;
-        const mapPixelH = getMapHeight(TEST_MAP) * TILE_SIZE;
+        const mapPixelW = getMapWidth(FALLBACK_MAP) * TILE_SIZE;
+        const mapPixelH = getMapHeight(FALLBACK_MAP) * TILE_SIZE;
         const scale = Math.min(canvasWidth / mapPixelW, canvasHeight / mapPixelH) * 0.9;
         const offsetX = (canvasWidth - mapPixelW * scale) / 2;
         const offsetY = (canvasHeight - mapPixelH * scale) / 2;
@@ -537,7 +604,7 @@ export default function GameCanvas({
         ctx.translate(offsetX, offsetY);
         ctx.scale(scale, scale);
 
-        renderBlueprintMap(ctx, TEST_MAP);
+        renderBlueprintMap(ctx, FALLBACK_MAP);
         renderWhisperEntities(ctx, state, timeRef.current);
 
         ctx.restore();
@@ -578,7 +645,6 @@ export default function GameCanvas({
       <HUD
         role={role}
         phase={phase}
-        startTime={gameState?.startTime ?? 0}
         heistStartTime={gameState?.heistStartTime}
         hasItem={gameState?.runner.hasItem ?? false}
         itemName={gameState?.items[0]?.name ?? "Golden Rubber Duck"}

@@ -8,7 +8,6 @@ const HEIST_DURATION = 180_000; // 3 minutes
 interface HUDProps {
   role: "runner" | "whisper";
   phase: string;
-  startTime: number;
   heistStartTime?: number;
   hasItem: boolean;
   itemName: string;
