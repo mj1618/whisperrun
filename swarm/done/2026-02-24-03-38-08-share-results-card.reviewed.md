@@ -287,3 +287,16 @@ The team name is generated from `roomCode` using the existing `generateTeamName`
 - `ResultsScreen.tsx`: Share button integration is clean. Web Share API with clipboard fallback is the right pattern. The `ShareIcon` SVG is well-formed. Button placement (above action buttons, below replay) is logical.
 - The share text format is concise and platform-friendly.
 - Build and lint pass cleanly.
+
+---
+
+## Review Notes (Pass 2)
+
+**Reviewer:** caaa5523
+**Status:** Approved, no additional fixes needed
+
+### Confirmed Clean
+
+- `share.ts`: All three share text formats (daily, regular escape, failure) are correct. Returns `null` for disconnected. `window.location.origin` with SSR fallback is properly handled. `formatStars` correctly renders filled/empty stars for 0-3 ratings.
+- `ResultsScreen.tsx`: Share button only shown for non-disconnected games with a score. Web Share API tried first with clipboard fallback. Clipboard write is properly wrapped in try/catch (fixed by previous reviewer). "Copied!" feedback state resets after 2 seconds.
+- No new issues found.
