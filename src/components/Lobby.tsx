@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { generateMap } from "@/game/map-generator";
@@ -18,6 +19,21 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   const selectRole = useMutation(api.rooms.selectRole);
   const toggleReady = useMutation(api.rooms.toggleReady);
   const startGame = useMutation(api.rooms.startGame);
+  const heartbeatMut = useMutation(api.rooms.heartbeat);
+
+  // Heartbeat — signal presence every 3 seconds while in lobby
+  useEffect(() => {
+    if (!roomCode || !sessionId) return;
+
+    // Send initial heartbeat immediately
+    heartbeatMut({ roomCode, sessionId }).catch(() => {});
+
+    const interval = setInterval(() => {
+      heartbeatMut({ roomCode, sessionId }).catch(() => {});
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [roomCode, sessionId, heartbeatMut]);
 
   if (!room) {
     return (

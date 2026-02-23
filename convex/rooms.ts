@@ -48,7 +48,7 @@ export const createRoom = mutation({
 
     const roomId = await ctx.db.insert("rooms", {
       roomCode,
-      players: [{ sessionId: args.sessionId, role: null, ready: false }],
+      players: [{ sessionId: args.sessionId, role: null, ready: false, lastHeartbeat: Date.now() }],
       status: "waiting",
       mapSeed,
       createdAt: Date.now(),
@@ -78,15 +78,23 @@ export const joinRoom = mutation({
     if (!room) throw new Error("Room not found");
     if (room.status !== "waiting") throw new Error("Game already started");
 
-    // Idempotent rejoin — if player is already in the room, just return
-    const existing = room.players.find((p) => p.sessionId === args.sessionId);
-    if (existing) return room;
+    // Idempotent rejoin — if player is already in the room, refresh heartbeat
+    const existingIdx = room.players.findIndex((p) => p.sessionId === args.sessionId);
+    if (existingIdx !== -1) {
+      const updatedPlayers = [...room.players];
+      updatedPlayers[existingIdx] = {
+        ...updatedPlayers[existingIdx],
+        lastHeartbeat: Date.now(),
+      };
+      await ctx.db.patch(room._id, { players: updatedPlayers });
+      return { ...room, players: updatedPlayers };
+    }
 
     if (room.players.length >= 2) throw new Error("Room is full");
 
     const updatedPlayers = [
       ...room.players,
-      { sessionId: args.sessionId, role: null as "runner" | "whisper" | null, ready: false },
+      { sessionId: args.sessionId, role: null as "runner" | "whisper" | null, ready: false, lastHeartbeat: Date.now() },
     ];
     await ctx.db.patch(room._id, { players: updatedPlayers });
 
@@ -165,6 +173,99 @@ export const toggleReady = mutation({
   },
 });
 
+const HEARTBEAT_TIMEOUT = 8000; // 8 seconds without a heartbeat = disconnected
+const DISCONNECT_GRACE_PERIOD = 5000; // 5 seconds grace before ending game
+
+export const heartbeat = mutation({
+  args: { roomCode: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_roomCode", (q) => q.eq("roomCode", args.roomCode))
+      .first();
+    if (!room) return;
+
+    const playerIndex = room.players.findIndex(
+      (p) => p.sessionId === args.sessionId
+    );
+    if (playerIndex === -1) return;
+
+    const updatedPlayers = [...room.players];
+    updatedPlayers[playerIndex] = {
+      ...updatedPlayers[playerIndex],
+      lastHeartbeat: Date.now(),
+    };
+    await ctx.db.patch(room._id, { players: updatedPlayers });
+  },
+});
+
+export const checkDisconnect = mutation({
+  args: { roomCode: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_roomCode", (q) => q.eq("roomCode", args.roomCode))
+      .first();
+    if (!room || room.status === "finished") return { disconnected: false };
+
+    const now = Date.now();
+    const otherPlayer = room.players.find(
+      (p) => p.sessionId !== args.sessionId
+    );
+    if (!otherPlayer) return { disconnected: false };
+
+    // Check if other player's heartbeat has timed out
+    const lastBeat = otherPlayer.lastHeartbeat ?? room.createdAt;
+    const isTimedOut = now - lastBeat > HEARTBEAT_TIMEOUT;
+
+    if (!isTimedOut) {
+      // Partner is fine — clear any pending disconnect
+      if (room.disconnectedAt) {
+        await ctx.db.patch(room._id, {
+          disconnectedAt: undefined,
+          disconnectedPlayer: undefined,
+        });
+      }
+      return { disconnected: false };
+    }
+
+    // Partner appears disconnected
+    if (!room.disconnectedAt) {
+      // First detection — start grace period
+      await ctx.db.patch(room._id, {
+        disconnectedAt: now,
+        disconnectedPlayer: otherPlayer.sessionId,
+      });
+      return { disconnected: false, gracePeriod: true };
+    }
+
+    // Check if grace period has expired
+    if (now - room.disconnectedAt > DISCONNECT_GRACE_PERIOD) {
+      // Grace period expired — end the game
+      await ctx.db.patch(room._id, { status: "finished" });
+
+      // Update game state to a disconnected phase
+      const gameState = await ctx.db
+        .query("gameState")
+        .withIndex("by_roomId", (q) => q.eq("roomId", room._id))
+        .first();
+      if (
+        gameState &&
+        gameState.phase !== "escaped" &&
+        gameState.phase !== "caught" &&
+        gameState.phase !== "timeout"
+      ) {
+        await ctx.db.patch(gameState._id, { phase: "disconnected" });
+      }
+
+      return { disconnected: true, endedGame: true };
+    }
+
+    // Still in grace period
+    return { disconnected: false, gracePeriod: true };
+  },
+});
+
 export const resetRoom = mutation({
   args: { roomCode: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
@@ -189,6 +290,8 @@ export const resetRoom = mutation({
       status: "waiting",
       players: resetPlayers,
       mapSeed: Math.floor(Math.random() * 1000000),
+      disconnectedAt: undefined,
+      disconnectedPlayer: undefined,
     });
 
     // Delete old game state

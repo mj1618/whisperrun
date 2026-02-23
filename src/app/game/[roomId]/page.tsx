@@ -107,7 +107,8 @@ export default function GamePage() {
     gameState &&
     (gameState.phase === "escaped" ||
       gameState.phase === "caught" ||
-      gameState.phase === "timeout")
+      gameState.phase === "timeout" ||
+      gameState.phase === "disconnected")
   ) {
     return (
       <ResultsScreen
@@ -127,6 +128,7 @@ export default function GamePage() {
   return (
     <GameCanvas
       roomId={room._id}
+      roomCode={roomCode}
       sessionId={sessionId}
       role={playerRole}
       mapSeed={room.mapSeed}

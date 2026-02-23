@@ -33,7 +33,7 @@ export interface LocalGameState {
   pings: Array<{ x: number; y: number; type: "danger" | "go" | "item"; createdAt: number }>;
   exitX: number;
   exitY: number;
-  phase: "planning" | "heist" | "escaped" | "caught" | "timeout";
+  phase: "planning" | "heist" | "escaped" | "caught" | "timeout" | "disconnected";
   startTime: number;
   heistStartTime?: number;
 }

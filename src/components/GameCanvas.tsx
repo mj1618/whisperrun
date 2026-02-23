@@ -8,6 +8,8 @@ import { GameLoop } from "@/engine/loop";
 import { Renderer, TILE_SIZE, clearTileCache } from "@/engine/renderer";
 import { Camera } from "@/engine/camera";
 import { InputHandler } from "@/engine/input";
+import { TouchInputManager, isTouchDevice } from "@/engine/touch-input";
+import { TouchControls } from "@/components/TouchControls";
 import { isWalkable, getMapWidth, getMapHeight, TileType } from "@/game/map";
 import { generateMap, GeneratedMap } from "@/game/map-generator";
 import { GameStateManager, LocalGameState } from "@/game/game-state";
@@ -18,7 +20,6 @@ import {
   tickGuard,
   GuardData,
   canGuardSeeRunner,
-  canGuardHearRunner,
   canCameraSeeRunner,
   updateCameraAngle,
   CAMERA_ALERT_COOLDOWN,
@@ -49,6 +50,7 @@ import HUD from "@/components/HUD";
 
 interface GameCanvasProps {
   roomId: Id<"rooms">;
+  roomCode: string;
   sessionId: string;
   role: "runner" | "whisper";
   mapSeed: number;
@@ -236,7 +238,7 @@ function PlanningOverlay({
             {role === "runner" ? (
               <ul className="text-[#E8D5B7]/60 text-xs space-y-1 list-disc list-inside">
                 <li>Guards have vision cones &mdash; stay behind them</li>
-                <li>Crouching reduces your detection range</li>
+                <li>Running creates noise &mdash; crouch (Shift) near guards to stay silent</li>
                 <li>Hide in cabinets to become invisible</li>
                 <li>Grab the target item, then find the exit door</li>
               </ul>
@@ -264,6 +266,7 @@ function PlanningOverlay({
 
 export default function GameCanvas({
   roomId,
+  roomCode,
   sessionId,
   role,
   mapSeed,
@@ -274,11 +277,15 @@ export default function GameCanvas({
   const timeRef = useRef(0);
   const eventRecorderRef = useRef(new EventRecorder());
   const onGameEndRef = useRef(onGameEnd);
+  const touchInput = useMemo(() => new TouchInputManager(), []);
+  const touchInputRef = useRef(touchInput);
+  const [showTouchControls] = useState(() => isTouchDevice());
 
   // Walk animation state
   const walkFrameRef = useRef(0);
   const walkFrameAccumRef = useRef(0);
   const facingAngleRef = useRef(0);
+  const runnerMovingRef = useRef(false);
   const guardWalkFrameRef = useRef<Record<string, number>>({});
   const guardWalkAccumRef = useRef<Record<string, number>>({});
   const guardPrevPosRef = useRef<Record<string, { x: number; y: number }>>({});
@@ -359,6 +366,45 @@ export default function GameCanvas({
   // Blueprint zoom state stored in ref so click handler can access it
   const blueprintTransformRef = useRef({ offsetX: 0, offsetY: 0, scale: 1 });
 
+  // Disconnect warning state
+  const [showDisconnectWarning, setShowDisconnectWarning] = useState(false);
+
+  // Heartbeat — signal presence every 3 seconds
+  const heartbeatMut = useMutation(api.rooms.heartbeat);
+  useEffect(() => {
+    if (!roomCode || !sessionId) return;
+
+    // Send initial heartbeat immediately
+    heartbeatMut({ roomCode, sessionId }).catch(() => {});
+
+    const interval = setInterval(() => {
+      heartbeatMut({ roomCode, sessionId }).catch(() => {});
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [roomCode, sessionId, heartbeatMut]);
+
+  // Disconnect detection — check partner presence every 3 seconds
+  const checkDisconnectMut = useMutation(api.rooms.checkDisconnect);
+  useEffect(() => {
+    if (!roomCode || !sessionId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await checkDisconnectMut({ roomCode, sessionId });
+        if (result?.gracePeriod) {
+          setShowDisconnectWarning(true);
+        } else {
+          setShowDisconnectWarning(false);
+        }
+      } catch {
+        // Ignore errors
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [roomCode, sessionId, checkDisconnectMut]);
+
   // Update game state manager when Convex data arrives
   useEffect(() => {
     if (!gameState) {
@@ -380,18 +426,21 @@ export default function GameCanvas({
     gameStateManagerRef.current.setServerState(local);
   }, [gameState]);
 
-  // Initialize audio on first user interaction
+  // Initialize audio on first user interaction (click, key, or touch)
   useEffect(() => {
     const handleFirstInteraction = () => {
       initAudio();
       window.removeEventListener("click", handleFirstInteraction);
       window.removeEventListener("keydown", handleFirstInteraction);
+      window.removeEventListener("touchstart", handleFirstInteraction);
     };
     window.addEventListener("click", handleFirstInteraction);
     window.addEventListener("keydown", handleFirstInteraction);
+    window.addEventListener("touchstart", handleFirstInteraction);
     return () => {
       window.removeEventListener("click", handleFirstInteraction);
       window.removeEventListener("keydown", handleFirstInteraction);
+      window.removeEventListener("touchstart", handleFirstInteraction);
     };
   }, []);
 
@@ -566,7 +615,7 @@ export default function GameCanvas({
       prevHiding = state.runner.hiding;
 
       // Game over — fire onGameEnd callback and stop updates
-      const isGameOver = state.phase === "escaped" || state.phase === "caught" || state.phase === "timeout";
+      const isGameOver = state.phase === "escaped" || state.phase === "caught" || state.phase === "timeout" || state.phase === "disconnected";
       if (isGameOver) {
         if (!gameEndFired) {
           gameEndFired = true;
@@ -638,9 +687,12 @@ export default function GameCanvas({
 
         // Runner movement (only during heist, not hiding)
         let runnerMoving = false;
+        runnerMovingRef.current = false;
         if (state.phase === "heist" && !state.runner.hiding) {
+          const touchState = touchInputRef.current.getState();
+
           const crouching =
-            input.isKeyDown("ShiftLeft") || input.isKeyDown("ShiftRight");
+            input.isKeyDown("ShiftLeft") || input.isKeyDown("ShiftRight") || touchState.crouching;
           const speed = crouching ? CROUCH_SPEED : WALK_SPEED;
 
           let dx = 0;
@@ -650,14 +702,22 @@ export default function GameCanvas({
           if (input.isKeyDown("KeyA") || input.isKeyDown("ArrowLeft")) dx -= 1;
           if (input.isKeyDown("KeyD") || input.isKeyDown("ArrowRight")) dx += 1;
 
+          // Touch joystick overrides keyboard if active
+          if (touchState.moveX !== 0 || touchState.moveY !== 0) {
+            dx = touchState.moveX;
+            dy = touchState.moveY;
+          }
+
           if (dx !== 0 && dy !== 0) {
             const len = Math.sqrt(dx * dx + dy * dy);
             dx /= len;
             dy /= len;
           }
 
-          let newX = gsm.localRunnerX;
-          let newY = gsm.localRunnerY;
+          const prevX = gsm.localRunnerX;
+          const prevY = gsm.localRunnerY;
+          let newX = prevX;
+          let newY = prevY;
 
           const tryX = newX + dx * speed * dt;
           if (canMoveTo(tryX, newY, map.tiles)) newX = tryX;
@@ -668,8 +728,10 @@ export default function GameCanvas({
           gsm.setLocalRunnerPosition(newX, newY, crouching);
           setHudCrouchingRef.current(crouching);
 
-          // Walk animation tracking
-          runnerMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01;
+          // Walk animation: use actual position delta so pressing against
+          // a wall doesn't count as moving or making noise
+          runnerMoving = (newX !== prevX || newY !== prevY);
+          runnerMovingRef.current = runnerMoving;
           if (runnerMoving) {
             walkFrameAccumRef.current += dt * 8; // 8 fps walk cycle
             walkFrameRef.current = Math.floor(walkFrameAccumRef.current) % 4;
@@ -888,10 +950,10 @@ export default function GameCanvas({
           }
         }
 
-        // Interaction
+        // Interaction (keyboard or touch)
         if (
           state.phase === "heist" &&
-          (input.isKeyPressed("Space") || input.isKeyPressed("KeyE"))
+          (input.isKeyPressed("Space") || input.isKeyPressed("KeyE") || touchInputRef.current.getState().interactPressed)
         ) {
           const interaction = getInteraction(
             gsm.localRunnerX,
@@ -915,6 +977,9 @@ export default function GameCanvas({
         );
       }
       // Whisper: no movement, no camera follow — static zoomed-out view
+
+      // Clear touch one-shot flags at end of frame
+      touchInputRef.current.endFrame();
     };
 
     const render = () => {
@@ -994,6 +1059,30 @@ export default function GameCanvas({
           facingAngleRef.current
         );
 
+        // Noise wave indicator (visible when running, not crouching)
+        if (runnerMovingRef.current && !crouching && !state.runner.hiding) {
+          const runnerScreen = camera.worldToScreen(
+            runnerX * TILE_SIZE + TILE_SIZE / 2,
+            runnerY * TILE_SIZE + TILE_SIZE / 2
+          );
+          const pulse = (Date.now() % 800) / 800;
+          ctx.save();
+          ctx.strokeStyle = "rgba(255, 200, 100, 0.25)";
+          ctx.lineWidth = 1;
+          for (let ring = 0; ring < 3; ring++) {
+            const radius = NOISE_RADIUS_RUNNING * TILE_SIZE * (0.3 + ring * 0.25 + pulse * 0.15);
+            const alpha = 0.25 - ring * 0.08;
+            ctx.globalAlpha = Math.max(0, alpha);
+            ctx.beginPath();
+            ctx.arc(runnerScreen.x, runnerScreen.y, radius, -0.3, 0.3);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(runnerScreen.x, runnerScreen.y, radius, Math.PI - 0.3, Math.PI + 0.3);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
         // Fog of war
         const screen = camera.worldToScreen(
           runnerX * TILE_SIZE + TILE_SIZE / 2,
@@ -1059,11 +1148,14 @@ export default function GameCanvas({
   const activePingCount = (gameState?.pings ?? []).length;
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden">
+    <div
+      className="relative w-screen h-screen overflow-hidden touch-none select-none"
+      style={{ overscrollBehavior: "none" }}
+    >
       <canvas
         ref={canvasRef}
-        className="block"
-        style={{ width: "100vw", height: "100vh" }}
+        className="block touch-none"
+        style={{ width: "100vw", height: "100vh", touchAction: "none" }}
       />
 
       <HUD
@@ -1080,6 +1172,14 @@ export default function GameCanvas({
         guardAlertState={guardAlertState}
       />
 
+      {showTouchControls && (
+        <TouchControls
+          touchInput={touchInput}
+          role={role}
+          phase={phase}
+        />
+      )}
+
       {/* Planning phase overlay with countdown */}
       {phase === "planning" && (
         <PlanningOverlay
@@ -1087,6 +1187,16 @@ export default function GameCanvas({
           role={role}
           onStartHeist={handleStartHeist}
         />
+      )}
+
+      {/* Disconnect warning overlay */}
+      {showDisconnectWarning && (
+        <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
+          <div className="bg-[#2D1B0E]/90 border-2 border-[#FFD700]/50 rounded-xl px-8 py-6 text-center">
+            <p className="text-[#FFD700] text-xl font-bold">Partner Disconnected</p>
+            <p className="text-[#E8D5B7] text-sm mt-2">Waiting for them to reconnect...</p>
+          </div>
+        </div>
       )}
 
     </div>

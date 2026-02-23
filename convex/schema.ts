@@ -14,6 +14,7 @@ export default defineSchema({
           v.null()
         ),
         ready: v.boolean(),
+        lastHeartbeat: v.optional(v.number()),
       })
     ),
     status: v.union(
@@ -23,6 +24,8 @@ export default defineSchema({
     ),
     mapSeed: v.number(),
     createdAt: v.number(),
+    disconnectedAt: v.optional(v.number()),
+    disconnectedPlayer: v.optional(v.string()),
   }).index("by_roomCode", ["roomCode"]),
 
   gameState: defineTable({
@@ -81,6 +84,13 @@ export default defineSchema({
         baseAngle: v.number(),
       })
     ),
+    doors: v.array(
+      v.object({
+        x: v.number(),
+        y: v.number(),
+        open: v.boolean(),
+      })
+    ),
     exitX: v.number(),
     exitY: v.number(),
     phase: v.union(
@@ -88,7 +98,8 @@ export default defineSchema({
       v.literal("heist"),
       v.literal("escaped"),
       v.literal("caught"),
-      v.literal("timeout")
+      v.literal("timeout"),
+      v.literal("disconnected")
     ),
     startTime: v.number(),
     heistStartTime: v.optional(v.number()),

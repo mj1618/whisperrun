@@ -9,7 +9,7 @@ import { calculateScore } from "@/game/scoring";
 import { generateHighlights, formatEventTime } from "@/game/highlights";
 
 interface ResultsScreenProps {
-  outcome: "escaped" | "caught" | "timeout";
+  outcome: "escaped" | "caught" | "timeout" | "disconnected";
   heistStartTime?: number;
   itemName: string;
   hasItem: boolean;
@@ -48,6 +48,13 @@ const OUTCOME_CONFIG = {
     bgAccent: "from-amber-900/30 to-transparent",
     borderColor: "border-amber-500/30",
   },
+  disconnected: {
+    title: "Partner Disconnected",
+    subtitle: "Your partner left the heist. Maybe next time!",
+    accent: "#90A4AE",
+    bgAccent: "from-gray-900/30 to-transparent",
+    borderColor: "border-gray-500/30",
+  },
 } as const;
 
 export default function ResultsScreen({
@@ -67,12 +74,13 @@ export default function ResultsScreen({
     heistStartTime ? Date.now() - heistStartTime : 0
   );
 
-  const hasEvents = events && events.length > 0;
+  const isDisconnected = outcome === "disconnected";
+  const hasEvents = events && events.length > 0 && !isDisconnected;
 
   const score = useMemo(
     () =>
       hasEvents
-        ? calculateScore(outcome, heistDuration, events)
+        ? calculateScore(outcome as "escaped" | "caught" | "timeout", heistDuration, events)
         : null,
     [hasEvents, outcome, heistDuration, events]
   );
@@ -136,75 +144,77 @@ export default function ResultsScreen({
           )}
         </div>
 
-        {/* Score & Stats card */}
-        <div className="bg-black/30 rounded-xl p-5 space-y-3">
-          {score && (
+        {/* Score & Stats card — skip for disconnected games */}
+        {!isDisconnected && (
+          <div className="bg-black/30 rounded-xl p-5 space-y-3">
+            {score && (
+              <div className="flex justify-between items-center">
+                <span className="text-[#E8D5B7]/60 text-sm">Score</span>
+                <span className="text-[#FFD700] font-mono font-bold text-lg">
+                  {score.total.toLocaleString()}
+                </span>
+              </div>
+            )}
+
             <div className="flex justify-between items-center">
-              <span className="text-[#E8D5B7]/60 text-sm">Score</span>
-              <span className="text-[#FFD700] font-mono font-bold text-lg">
-                {score.total.toLocaleString()}
+              <span className="text-[#E8D5B7]/60 text-sm">Time</span>
+              <span className="text-[#E8D5B7] font-mono font-bold">
+                {formatDuration(heistDuration)}
               </span>
             </div>
-          )}
 
-          <div className="flex justify-between items-center">
-            <span className="text-[#E8D5B7]/60 text-sm">Time</span>
-            <span className="text-[#E8D5B7] font-mono font-bold">
-              {formatDuration(heistDuration)}
-            </span>
+            {score && score.timeBonus > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-[#E8D5B7]/60 text-sm">Time Bonus</span>
+                <span className="text-[#4CAF50] font-mono text-sm">
+                  +{score.timeBonus}
+                </span>
+              </div>
+            )}
+
+            {score && score.stealthBonus > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-[#E8D5B7]/60 text-sm">Stealth</span>
+                <span className="text-[#4CAF50] font-mono text-sm">
+                  +{score.stealthBonus}
+                </span>
+              </div>
+            )}
+
+            {score && score.stylePoints > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-[#E8D5B7]/60 text-sm">Style</span>
+                <span className="text-[#4CAF50] font-mono text-sm">
+                  +{score.stylePoints}
+                </span>
+              </div>
+            )}
+
+            {score && (
+              <div className="flex justify-between items-center">
+                <span className="text-[#E8D5B7]/60 text-sm">Panic Moments</span>
+                <span className="text-[#FF6B6B] font-mono text-sm">
+                  {score.panicMoments}
+                </span>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center">
+              <span className="text-[#E8D5B7]/60 text-sm">Item</span>
+              <span
+                className={`text-sm font-bold ${hasItem ? "text-[#FFD700]" : "text-[#E8D5B7]/40"}`}
+              >
+                {hasItem ? itemName : `${itemName} (missed)`}
+              </span>
+            </div>
+
+            {!hasEvents && role === "whisper" && (
+              <p className="text-[#E8D5B7]/40 text-xs text-center pt-1">
+                Score tracked for the Runner
+              </p>
+            )}
           </div>
-
-          {score && score.timeBonus > 0 && (
-            <div className="flex justify-between items-center">
-              <span className="text-[#E8D5B7]/60 text-sm">Time Bonus</span>
-              <span className="text-[#4CAF50] font-mono text-sm">
-                +{score.timeBonus}
-              </span>
-            </div>
-          )}
-
-          {score && score.stealthBonus > 0 && (
-            <div className="flex justify-between items-center">
-              <span className="text-[#E8D5B7]/60 text-sm">Stealth</span>
-              <span className="text-[#4CAF50] font-mono text-sm">
-                +{score.stealthBonus}
-              </span>
-            </div>
-          )}
-
-          {score && score.stylePoints > 0 && (
-            <div className="flex justify-between items-center">
-              <span className="text-[#E8D5B7]/60 text-sm">Style</span>
-              <span className="text-[#4CAF50] font-mono text-sm">
-                +{score.stylePoints}
-              </span>
-            </div>
-          )}
-
-          {score && (
-            <div className="flex justify-between items-center">
-              <span className="text-[#E8D5B7]/60 text-sm">Panic Moments</span>
-              <span className="text-[#FF6B6B] font-mono text-sm">
-                {score.panicMoments}
-              </span>
-            </div>
-          )}
-
-          <div className="flex justify-between items-center">
-            <span className="text-[#E8D5B7]/60 text-sm">Item</span>
-            <span
-              className={`text-sm font-bold ${hasItem ? "text-[#FFD700]" : "text-[#E8D5B7]/40"}`}
-            >
-              {hasItem ? itemName : `${itemName} (missed)`}
-            </span>
-          </div>
-
-          {!hasEvents && role === "whisper" && (
-            <p className="text-[#E8D5B7]/40 text-xs text-center pt-1">
-              Score tracked for the Runner
-            </p>
-          )}
-        </div>
+        )}
 
         {/* Highlight Reel */}
         {highlights.length > 0 && (
