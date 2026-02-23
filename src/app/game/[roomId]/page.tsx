@@ -104,6 +104,8 @@ export default function GamePage() {
   }
 
   const gameDifficulty = (gameState?.difficulty as DifficultyLevel | undefined) ?? (room.difficulty as DifficultyLevel | undefined) ?? "standard";
+  const runnerPlayer = room.players.find((p) => p.role === "runner");
+  const runnerColorPresetId = runnerPlayer?.runnerColor ?? "classic";
 
   // Finished state — show ResultsScreen
   if (
@@ -140,6 +142,7 @@ export default function GamePage() {
       role={playerRole}
       mapSeed={room.mapSeed}
       difficulty={gameDifficulty}
+      runnerColorPresetId={runnerColorPresetId}
       onGameEnd={(data) => {
         setGameEvents(data.events);
         setPositionTrail(data.positionTrail);

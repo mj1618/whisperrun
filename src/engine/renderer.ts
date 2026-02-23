@@ -142,7 +142,14 @@ export class Renderer {
     hiding: boolean,
     hasItem: boolean = false,
     walkFrame: number = 0,
-    facingAngle: number = 0
+    facingAngle: number = 0,
+    colors?: {
+      body: string;
+      bodyOutline: string;
+      head: string;
+      legs: string;
+      hidingOutline: string;
+    }
   ) {
     const screen = this.camera.worldToScreen(
       worldX * TILE_SIZE + TILE_SIZE / 2,
@@ -154,6 +161,7 @@ export class Renderer {
       hasItem,
       walkFrame,
       facingAngle,
+      colors,
     });
   }
 

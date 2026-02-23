@@ -135,7 +135,8 @@ export function renderWhisperEntities(
   gameState: LocalGameState,
   time: number,
   guardPatrols?: Record<string, Array<{ x: number; y: number }>>,
-  diffConfig?: { guardRange?: number; cameraRange?: number; cameraSweepSpeed?: number }
+  diffConfig?: { guardRange?: number; cameraRange?: number; cameraSweepSpeed?: number },
+  runnerColor?: string
 ) {
   const { runner, guards, items, pings, exitX, exitY } = gameState;
 
@@ -330,28 +331,29 @@ export function renderWhisperEntities(
     const rx = runner.x * TILE_SIZE + TILE_SIZE / 2;
     const ry = runner.y * TILE_SIZE + TILE_SIZE / 2;
     const radius = runner.crouching ? 8 : 10;
+    const rColor = runnerColor ?? "#FF8C42";
 
     // Glow
     ctx.save();
-    ctx.shadowColor = "#FF8C42";
+    ctx.shadowColor = rColor;
     ctx.shadowBlur = 10 + 4 * Math.sin(time * 5);
     ctx.beginPath();
     ctx.arc(rx, ry, radius, 0, Math.PI * 2);
 
     if (runner.hiding) {
       ctx.globalAlpha = 0.4;
-      ctx.strokeStyle = "#FF8C42";
+      ctx.strokeStyle = rColor;
       ctx.lineWidth = 2;
       ctx.stroke();
     } else {
-      ctx.fillStyle = "#FF8C42";
+      ctx.fillStyle = rColor;
       ctx.fill();
     }
     ctx.restore();
 
     // Crouch label
     if (runner.crouching && !runner.hiding) {
-      ctx.fillStyle = "#FF8C42";
+      ctx.fillStyle = rColor;
       ctx.font = "bold 8px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";

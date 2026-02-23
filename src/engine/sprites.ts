@@ -20,9 +20,16 @@ export function drawRunnerSprite(
     hasItem: boolean;
     walkFrame: number;
     facingAngle: number;
+    colors?: {
+      body: string;
+      bodyOutline: string;
+      head: string;
+      legs: string;
+      hidingOutline: string;
+    };
   }
 ): void {
-  const { crouching, hiding, hasItem, walkFrame, facingAngle } = opts;
+  const { crouching, hiding, hasItem, walkFrame, facingAngle, colors } = opts;
 
   ctx.save();
 
@@ -48,7 +55,7 @@ export function drawRunnerSprite(
   const legY = sy + 4 * scaleY + yShift;
   const legW = 4;
   const legH = 6 * scaleY;
-  ctx.fillStyle = "#8B6914";
+  ctx.fillStyle = colors?.legs ?? "#8B6914";
 
   // Left leg
   const leftLegOff = walkFrame === 1 ? -legOffset : walkFrame === 3 ? legOffset : 0;
@@ -63,22 +70,22 @@ export function drawRunnerSprite(
   const bodyH = 12 * scaleY;
   const bodyX = sx - bodyW / 2;
   const bodyY = sy - 6 * scaleY + yShift;
-  ctx.fillStyle = "#E39B32";
+  ctx.fillStyle = colors?.body ?? "#E39B32";
   ctx.beginPath();
   ctx.roundRect(bodyX, bodyY, bodyW, bodyH, 3);
   ctx.fill();
-  ctx.strokeStyle = "#B47820";
+  ctx.strokeStyle = colors?.bodyOutline ?? "#B47820";
   ctx.lineWidth = 1;
   ctx.stroke();
 
   // Head
   const headRadius = 6 * (crouching ? 0.9 : 1);
   const headY = bodyY - headRadius + 1;
-  ctx.fillStyle = "#F0B050";
+  ctx.fillStyle = colors?.head ?? "#F0B050";
   ctx.beginPath();
   ctx.arc(sx, headY, headRadius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#B47820";
+  ctx.strokeStyle = colors?.bodyOutline ?? "#B47820";
   ctx.lineWidth = 1;
   ctx.stroke();
 
@@ -107,7 +114,7 @@ export function drawRunnerSprite(
   // Hiding dashed outline
   if (hiding) {
     ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = "rgba(227, 155, 50, 0.6)";
+    ctx.strokeStyle = colors?.hidingOutline ?? "rgba(227, 155, 50, 0.6)";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(sx, sy + yShift - 2, 14, 0, Math.PI * 2);

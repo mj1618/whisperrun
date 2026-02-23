@@ -7,6 +7,7 @@ import { generateMap } from "@/game/map-generator";
 import { facingToAngle } from "@/game/guard-ai";
 import { DifficultyLevel, getDifficultyConfig } from "@/game/difficulty";
 import InviteLink from "./InviteLink";
+import { RUNNER_COLOR_PRESETS } from "@/game/runner-colors";
 
 type Role = "runner" | "whisper";
 
@@ -21,6 +22,7 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
   const toggleReady = useMutation(api.rooms.toggleReady);
   const startGame = useMutation(api.rooms.startGame);
   const setDifficultyMut = useMutation(api.rooms.setDifficulty);
+  const setRunnerColorMut = useMutation(api.rooms.setRunnerColor);
   const heartbeatMut = useMutation(api.rooms.heartbeat);
 
   // Heartbeat — signal presence every 3 seconds while in lobby
@@ -53,6 +55,10 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
 
   const handleSetDifficulty = async (level: DifficultyLevel) => {
     await setDifficultyMut({ roomCode, sessionId, difficulty: level });
+  };
+
+  const handleSetRunnerColor = async (presetId: string) => {
+    await setRunnerColorMut({ roomCode, sessionId, colorPresetId: presetId });
   };
 
   const handleSelectRole = async (role: Role) => {
@@ -157,6 +163,35 @@ export default function Lobby({ roomCode, sessionId }: LobbyProps) {
             onSelect={() => handleSelectRole("whisper")}
           />
         </div>
+
+        {/* Runner Color Picker — only shown to the player who selected Runner */}
+        {me?.role === "runner" && (
+          <div className="text-center space-y-2">
+            <p className="text-sm text-[#8B7355]">Runner Color</p>
+            <div className="flex justify-center gap-2 flex-wrap">
+              {RUNNER_COLOR_PRESETS.map((preset) => {
+                const isSelected = (me.runnerColor ?? "classic") === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => handleSetRunnerColor(preset.id)}
+                    className={`w-10 h-10 rounded-full border-2 transition-all duration-200
+                      ${isSelected
+                        ? "border-[#FFD700] ring-2 ring-[#FFD700]/50 scale-110"
+                        : "border-[#8B7355]/40 hover:border-[#E8D5B7] hover:scale-105"
+                      }`}
+                    title={preset.label}
+                  >
+                    <div
+                      className="w-full h-full rounded-full"
+                      style={{ backgroundColor: preset.body }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Difficulty Selector */}
         <div className="text-center space-y-2">

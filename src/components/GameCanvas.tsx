@@ -53,6 +53,7 @@ import {
 } from "@/engine/audio";
 import HUD from "@/components/HUD";
 import { QUICK_COMM_MESSAGES, QUICK_COMM_COOLDOWN_MS } from "@/game/quick-comms";
+import { getRunnerPreset } from "@/game/runner-colors";
 
 interface GameCanvasProps {
   roomId: Id<"rooms">;
@@ -61,6 +62,7 @@ interface GameCanvasProps {
   role: "runner" | "whisper";
   mapSeed: number;
   difficulty?: DifficultyLevel;
+  runnerColorPresetId?: string;
   onGameEnd?: (data: { events: GameEvent[]; positionTrail: PositionPoint[] }) => void;
 }
 
@@ -304,11 +306,15 @@ export default function GameCanvas({
   role,
   mapSeed,
   difficulty: difficultyProp,
+  runnerColorPresetId,
   onGameEnd,
 }: GameCanvasProps) {
   const diffConfig = getDifficultyConfig(difficultyProp ?? "standard");
   const diffConfigRef = useRef(diffConfig);
   useEffect(() => { diffConfigRef.current = diffConfig; }, [diffConfig]);
+  const runnerColors = getRunnerPreset(runnerColorPresetId ?? "classic");
+  const runnerColorsRef = useRef(runnerColors);
+  useEffect(() => { runnerColorsRef.current = runnerColors; }, [runnerColors]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameStateManagerRef = useRef(new GameStateManager());
   const timeRef = useRef(0);
@@ -1299,7 +1305,8 @@ export default function GameCanvas({
           state.runner.hiding,
           state.runner.hasItem,
           walkFrameRef.current,
-          facingAngleRef.current
+          facingAngleRef.current,
+          runnerColorsRef.current
         );
 
         // Noise wave indicator (visible when running, not crouching)
@@ -1368,7 +1375,7 @@ export default function GameCanvas({
           guardRange: diffConfigRef.current.guardRange,
           cameraRange: diffConfigRef.current.cameraRange,
           cameraSweepSpeed: diffConfigRef.current.cameraSweepSpeed,
-        });
+        }, runnerColorsRef.current.body);
 
         // Render synced paths
         if (state.paths.length > 0) {

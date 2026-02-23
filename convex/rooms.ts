@@ -169,6 +169,34 @@ export const setDifficulty = mutation({
   },
 });
 
+export const setRunnerColor = mutation({
+  args: {
+    roomCode: v.string(),
+    sessionId: v.string(),
+    colorPresetId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_roomCode", (q) => q.eq("roomCode", args.roomCode))
+      .first();
+    if (!room) throw new Error("Room not found");
+    if (room.status !== "waiting") throw new Error("Game already started");
+
+    const playerIndex = room.players.findIndex(
+      (p) => p.sessionId === args.sessionId
+    );
+    if (playerIndex === -1) throw new Error("Player not in room");
+
+    const updatedPlayers = [...room.players];
+    updatedPlayers[playerIndex] = {
+      ...updatedPlayers[playerIndex],
+      runnerColor: args.colorPresetId,
+    };
+    await ctx.db.patch(room._id, { players: updatedPlayers });
+  },
+});
+
 export const toggleReady = mutation({
   args: { roomCode: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {

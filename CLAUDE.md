@@ -66,6 +66,7 @@ Path alias: `@/*` maps to `./src/*` (configured in `tsconfig.json`).
 - **Completed:** Whisper Quick-Comms — predefined short messages (STOP!, GO NOW!, BEHIND YOU!, HIDE!, You're safe, Nice move!) sent by Whisper to Runner, large overlay with sound cues, keyboard shortcuts (Q/W/E/R/T/Y), 1.5s cooldown, mobile touch buttons
 - **Completed:** Visual Heist Replay Map — animated minimap on results screen showing Runner's path through the building with event markers (guard alerts, near misses, item pickup), 5s playback animation, blueprint aesthetic, position tracking via EventRecorder
 - **Completed:** Share Results Card — "Share Score" button on results screen, generates formatted text snippet with emoji/stars/score and copies to clipboard (Web Share API on mobile), daily challenge variant with competitive CTA
-- **Queued:** Runner Color Customization — 6 color presets selectable in lobby, stored in Convex room state, rendered via parameterized drawRunnerSprite, visible in both Runner and Whisper views
+- **Completed:** Runner Color Customization — 6 color presets (Classic, Midnight, Forest, Crimson, Violet, Ghost) selectable in lobby, stored in Convex room state, rendered via parameterized drawRunnerSprite, visible in both Runner and Whisper views
+- **Queued:** Guard A* Pathfinding — tile-based A* navigation for guards, path caching with TTL, replaces direct-line movement that causes guards to get stuck on wall corners, fallback to direct movement for unreachable targets
 - See `swarm/PLAN.md` for full project plan and milestones
 - See `swarm/todos/` and `swarm/done/` for task tracking

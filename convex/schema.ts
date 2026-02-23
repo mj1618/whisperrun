@@ -15,6 +15,7 @@ export default defineSchema({
         ),
         ready: v.boolean(),
         lastHeartbeat: v.optional(v.number()),
+        runnerColor: v.optional(v.string()),
       })
     ),
     status: v.union(
